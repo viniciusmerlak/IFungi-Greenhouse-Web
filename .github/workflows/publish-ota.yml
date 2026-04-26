@@ -1,0 +1,107 @@
+name: Publish OTA Firmware
+
+on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: "OTA version (example: 1.2.3)"
+        required: true
+        type: string
+      greenhouse_id:
+        description: "Greenhouse id in Firebase (example: IFUNGI-EC:62:60:99:E7:0C)"
+        required: true
+        type: string
+      firmware_url:
+        description: "Direct URL to firmware .bin to publish"
+        required: true
+        type: string
+      release_repo:
+        description: "GitHub repository that will host releases (owner/repo)"
+        required: true
+        default: "viniciusmerlak/IFUNGI-OTA-UPDATES"
+        type: string
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - name: Download firmware binary
+        run: |
+          set -euo pipefail
+          curl -fL "${{ inputs.firmware_url }}" -o firmware.bin
+          test -s firmware.bin
+
+      - name: Create release and upload binary
+        id: release
+        env:
+          GH_TOKEN: ${{ secrets.OTA_GITHUB_TOKEN }}
+          RELEASE_REPO: ${{ inputs.release_repo }}
+          VERSION: ${{ inputs.version }}
+        run: |
+          set -euo pipefail
+          if [ -z "${GH_TOKEN:-}" ]; then
+            echo "Secret OTA_GITHUB_TOKEN is required."
+            exit 1
+          fi
+
+          TAG="v${VERSION}"
+          RELEASE_NAME="OTA ${VERSION}"
+
+          if gh release view "$TAG" --repo "$RELEASE_REPO" >/dev/null 2>&1; then
+            echo "Release $TAG already exists in $RELEASE_REPO."
+            exit 1
+          fi
+
+          gh release create "$TAG" firmware.bin \
+            --repo "$RELEASE_REPO" \
+            --title "$RELEASE_NAME" \
+            --notes "OTA published by workflow on $(date -u +'%Y-%m-%dT%H:%M:%SZ')"
+
+          DOWNLOAD_URL="$(gh api "repos/${RELEASE_REPO}/releases/tags/${TAG}" --jq '.assets[] | select(.name=="firmware.bin") | .browser_download_url')"
+          if [ -z "${DOWNLOAD_URL:-}" ]; then
+            echo "Could not resolve firmware.bin asset URL."
+            exit 1
+          fi
+
+          echo "tag=$TAG" >> "$GITHUB_OUTPUT"
+          echo "download_url=$DOWNLOAD_URL" >> "$GITHUB_OUTPUT"
+
+      - name: Update OTA node in Firebase
+        env:
+          FIREBASE_DATABASE_URL: ${{ secrets.FIREBASE_DATABASE_URL }}
+          FIREBASE_DB_SECRET: ${{ secrets.FIREBASE_DB_SECRET }}
+          GREENHOUSE_ID: ${{ inputs.greenhouse_id }}
+          VERSION: ${{ inputs.version }}
+          DOWNLOAD_URL: ${{ steps.release.outputs.download_url }}
+        run: |
+          set -euo pipefail
+          if [ -z "${FIREBASE_DATABASE_URL:-}" ] || [ -z "${FIREBASE_DB_SECRET:-}" ]; then
+            echo "Secrets FIREBASE_DATABASE_URL and FIREBASE_DB_SECRET are required."
+            exit 1
+          fi
+
+          ENCODED_ID="$(printf '%s' "$GREENHOUSE_ID" | jq -sRr @uri)"
+          NOTES="Atualizacao OTA publicada automaticamente em $(date -u +'%Y-%m-%d %H:%M:%SZ')"
+          ENDPOINT="${FIREBASE_DATABASE_URL%/}/greenhouses/${ENCODED_ID}/ota.json?auth=${FIREBASE_DB_SECRET}"
+          PAYLOAD="$(jq -nc \
+            --arg version "$VERSION" \
+            --arg url "$DOWNLOAD_URL" \
+            --arg notes "$NOTES" \
+            '{available: true, version: $version, url: $url, notes: $notes}')"
+
+          curl -f -X PATCH "$ENDPOINT" \
+            -H "Content-Type: application/json" \
+            -d "$PAYLOAD"
+
+      - name: Job summary
+        run: |
+          {
+            echo "## OTA Published"
+            echo ""
+            echo "- Release repo: \`${{ inputs.release_repo }}\`"
+            echo "- Tag: \`${{ steps.release.outputs.tag }}\`"
+            echo "- Firmware URL: ${{ steps.release.outputs.download_url }}"
+            echo "- Greenhouse: \`${{ inputs.greenhouse_id }}\`"
+          } >> "$GITHUB_STEP_SUMMARY"

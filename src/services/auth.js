@@ -25,7 +25,6 @@ export function useAuthState() {
 
   useEffect(() => {
     if (!auth || !hasFirebaseConfig) {
-      setLoading(false)
       return undefined
     }
     const unsub = onAuthStateChanged(auth, (firebaseUser) => {

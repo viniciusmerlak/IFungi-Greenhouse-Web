@@ -1,15 +1,25 @@
-import { updateGreenhouseNode, writeGreenhouseNode } from '../../services/rtdb'
+import { writeGreenhouseNode } from '../../services/rtdb'
+import { normalizeManualActuators } from '../../domain/greenhouseSchema'
 
 function statusDot(active) {
   return <span className={`dot ${active ? 'ok' : 'bad'}`} />
 }
 
 export default function ActuatorPanel({ greenhouseId, atuadores = {}, debugMode, manualActuators = {} }) {
+  const manual = normalizeManualActuators(manualActuators)
+
   const toggleDebug = async () => {
+    if (!debugMode && !window.confirm('Ativar debug libera controle manual dos atuadores. Continuar?')) return
     await writeGreenhouseNode(greenhouseId, 'debug_mode', !debugMode)
   }
 
-  const updateManual = (payload) => updateGreenhouseNode(greenhouseId, 'manual_actuators', payload)
+  const updateManual = async (payload) => {
+    const next = { ...manual, ...payload, leds: { ...(manual.leds || {}), ...(payload.leds || {}) } }
+    if (!next.rele1 && next.rele2) {
+      next.rele2 = false
+    }
+    await writeGreenhouseNode(greenhouseId, 'manual_actuators', next)
+  }
 
   return (
     <div className="card">
@@ -35,7 +45,7 @@ export default function ActuatorPanel({ greenhouseId, atuadores = {}, debugMode,
             <button
               key={index}
               type="button"
-              onClick={() => updateManual({ [`rele${index}`]: !manualActuators[`rele${index}`] })}
+              onClick={() => updateManual({ [`rele${index}`]: !manual[`rele${index}`] })}
             >
               Alternar rele{index}
             </button>
@@ -46,10 +56,10 @@ export default function ActuatorPanel({ greenhouseId, atuadores = {}, debugMode,
               type="range"
               min="0"
               max="255"
-              value={manualActuators?.leds?.intensity ?? 0}
+              value={manual?.leds?.intensity ?? 0}
               onChange={(e) =>
                 updateManual({
-                  leds: { ...(manualActuators.leds || {}), intensity: Number(e.target.value), ligado: true },
+                  leds: { ...(manual.leds || {}), intensity: Number(e.target.value), ligado: true },
                 })
               }
             />

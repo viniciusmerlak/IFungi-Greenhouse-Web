@@ -1,5 +1,6 @@
-import { onValue, ref, set, update } from 'firebase/database'
+import { get, onValue, ref, set, update } from 'firebase/database'
 import { db } from '../firebase'
+import { normalizeAllowedGreenhouses } from '../domain/greenhouseSchema'
 
 export const greenhousePath = (greenhouseId, node = '') =>
   `/greenhouses/${greenhouseId}${node ? `/${node}` : ''}`
@@ -13,6 +14,12 @@ export const subscribeNode = (path, callback) => {
   return onValue(ref(db, path), (snapshot) => callback(snapshot.val()))
 }
 
+export const readNode = async (path) => {
+  if (!db) return null
+  const snapshot = await get(ref(db, path))
+  return snapshot.exists() ? snapshot.val() : null
+}
+
 export const writeNode = (path, value) => {
   if (!db) return Promise.reject(missingDatabaseError)
   return set(ref(db, path), value)
@@ -24,7 +31,7 @@ export const updateNode = (path, value) => {
 }
 
 export const subscribeAllowedGreenhouses = (uid, callback) =>
-  subscribeNode(`/Usuarios/${uid}/Estufas permitidas`, callback)
+  subscribeNode(`/Usuarios/${uid}/Estufas permitidas`, (value) => callback(normalizeAllowedGreenhouses(value)))
 
 export const subscribeGreenhouseNode = (greenhouseId, node, callback) =>
   subscribeNode(greenhousePath(greenhouseId, node), callback)
@@ -37,3 +44,6 @@ export const writeGreenhouseNode = (greenhouseId, node, value) =>
 
 export const subscribeGreenhouseHistory = (greenhouseId, callback) =>
   subscribeNode(`/historico/${greenhouseId}`, callback)
+
+export const subscribeGreenhouseSnapshot = (greenhouseId, callback) =>
+  subscribeNode(`/greenhouses/${greenhouseId}`, callback)

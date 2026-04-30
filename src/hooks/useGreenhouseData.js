@@ -1,66 +1,59 @@
 import { useEffect, useMemo, useState } from 'react'
-import { subscribeGreenhouseHistory, subscribeGreenhouseNode } from '../services/rtdb'
+import { normalizeGreenhouseState } from '../domain/greenhouseSchema'
+import { subscribeGreenhouseHistory, subscribeGreenhouseSnapshot, subscribeNode } from '../services/rtdb'
 
-const defaultData = {
-  sensores: {},
-  atuadores: {},
-  setpoints: {},
-  led_schedule: {},
-  operation_mode: { cycles: {} },
-  ota: {},
-  status: {},
-  niveis: {},
-  debug_mode: false,
-  manual_actuators: {},
-  historico: {},
-}
+const defaultData = normalizeGreenhouseState({})
 
 export default function useGreenhouseData(greenhouseId) {
   const [data, setData] = useState(defaultData)
-  const [loading, setLoading] = useState(false)
+  const [connected, setConnected] = useState(true)
+  const [errorState, setErrorState] = useState({ id: '', message: '' })
+  const [historico, setHistorico] = useState({})
+  const [snapshotMeta, setSnapshotMeta] = useState({ id: '', ready: false })
 
   useEffect(() => {
     if (!greenhouseId) return undefined
-    setLoading(true)
-    const nodes = [
-      'sensores',
-      'atuadores',
-      'setpoints',
-      'led_schedule',
-      'operation_mode',
-      'ota',
-      'status',
-      'niveis',
-      'debug_mode',
-      'manual_actuators',
-    ]
 
-    const unsubscribers = nodes.map((node) =>
-      subscribeGreenhouseNode(greenhouseId, node, (value) => {
-        setData((prev) => ({ ...prev, [node]: value ?? defaultData[node] }))
-        setLoading(false)
-      }),
-    )
+    const unsubNode = subscribeGreenhouseSnapshot(greenhouseId, (value) => {
+      try {
+        setData(normalizeGreenhouseState(value || {}))
+        setSnapshotMeta({ id: greenhouseId, ready: true })
+      } catch (e) {
+        setErrorState({ id: greenhouseId, message: e.message || 'Falha ao processar dados da estufa' })
+      }
+    })
 
     const unsubHistorico = subscribeGreenhouseHistory(greenhouseId, (value) => {
-      setData((prev) => ({ ...prev, historico: value ?? {} }))
-      setLoading(false)
+      setHistorico(value ?? {})
+      setSnapshotMeta({ id: greenhouseId, ready: true })
+    })
+
+    const unsubConnected = subscribeNode('.info/connected', (value) => {
+      setConnected(Boolean(value))
     })
 
     return () => {
-      unsubscribers.forEach((unsub) => unsub())
+      unsubNode()
       unsubHistorico()
+      unsubConnected()
     }
   }, [greenhouseId])
 
   const historicalArray = useMemo(() => {
-    const entries = Object.values(data.historico || {}).filter(
+    const entries = Object.values(historico || {}).filter(
       (item) => item && typeof item === 'object',
     )
     return entries.sort(
       (a, b) => Number(a?.timestamp || 0) - Number(b?.timestamp || 0),
     )
-  }, [data.historico])
+  }, [historico])
 
-  return { data, historicalArray, loading }
+  const loading = Boolean(greenhouseId) && !(snapshotMeta.id === greenhouseId && snapshotMeta.ready)
+  const error = errorState.id === greenhouseId ? errorState.message : ''
+
+  if (!greenhouseId) {
+    return { data: defaultData, historicalArray: [], loading: false, connected, error: '' }
+  }
+
+  return { data, historicalArray, loading, connected, error }
 }

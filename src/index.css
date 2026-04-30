@@ -484,3 +484,37 @@ footer {
   color: #5f7c6b;
   margin-top: 2rem;
 }
+
+.warning-card {
+  border: 1px solid #f59e0b;
+  background: #fff7e6;
+  color: #92400e;
+}
+
+.hint-text {
+  font-size: 0.9rem;
+  color: #4b5563;
+  margin: 0.4rem 0 1rem;
+}
+
+.dashboard-layout {
+  display: grid;
+  gap: 1rem;
+}
+
+.dashboard-section {
+  display: grid;
+  gap: 0.75rem;
+}
+
+.section-title {
+  font-size: 1.05rem;
+  color: #1f5138;
+  margin: 0.25rem 0;
+}
+
+.config-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
+  gap: 0.9rem;
+}

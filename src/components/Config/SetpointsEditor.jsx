@@ -1,18 +1,15 @@
-import { useEffect, useState } from 'react'
+import { useState } from 'react'
 import toast from 'react-hot-toast'
+import { normalizeSetpoints } from '../../domain/greenhouseSchema'
 import { writeGreenhouseNode } from '../../services/rtdb'
 
 const fields = ['tMin', 'tMax', 'uMin', 'uMax', 'coSp', 'co2Sp', 'tvocsSp', 'lux']
 
 export default function SetpointsEditor({ greenhouseId, setpoints = {} }) {
-  const [form, setForm] = useState(setpoints)
-
-  useEffect(() => {
-    setForm(setpoints || {})
-  }, [setpoints])
+  const [form, setForm] = useState(() => normalizeSetpoints(setpoints))
 
   const save = async () => {
-    await writeGreenhouseNode(greenhouseId, 'setpoints', form)
+    await writeGreenhouseNode(greenhouseId, 'setpoints', normalizeSetpoints(form))
     toast.success('Setpoints salvos')
   }
 

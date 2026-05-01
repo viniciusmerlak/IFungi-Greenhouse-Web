@@ -65,7 +65,7 @@ export default function Login() {
               <MushroomLogo size={64} />
             </motion.div>
             <span className="auth-brand-name">IFungi</span>
-            <span className="auth-tagline">Greenhouse · Djamor</span>
+            <span className="auth-tagline">Greenhouse · IFungi</span>
           </div>
 
           <AnimatePresence mode="wait">

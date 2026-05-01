@@ -63,7 +63,7 @@ export default function DashboardPage() {
           <MushroomLogo size={42} />
           <div className="brand-text">
             <span className="brand-name">IFungi</span>
-            <span className="brand-tagline">Greenhouse · Djamor</span>
+            <span className="brand-tagline">Greenhouse · IFungi</span>
           </div>
         </div>
         <div className="header-user">

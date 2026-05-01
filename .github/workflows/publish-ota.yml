@@ -1,4 +1,5 @@
 name: Publish OTA Release
+run-name: "Publish OTA v${{ inputs.version }} (${{ inputs.run_seed }})"
 
 on:
   workflow_dispatch:
@@ -6,8 +7,8 @@ on:
       version:
         description: 'Versao semver (X.Y.Z)'
         required: true
-      file_url:
-        description: 'URL publica para baixar o .bin (Firebase Storage)'
+      staging_sha:
+        description: 'SHA do Git blob com o firmware no proprio repo (40 hex chars)'
         required: true
       target_repo:
         description: 'Repositorio onde publicar a release (owner/repo)'
@@ -25,24 +26,49 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Validar inputs
-        run: |
-          set -euo pipefail
-          if ! [[ "${{ inputs.version }}" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
-            echo "::error::Versao invalida (esperado X.Y.Z): ${{ inputs.version }}"
-            exit 1
-          fi
-          if ! [[ "${{ inputs.target_repo }}" =~ ^[^/]+/[^/]+$ ]]; then
-            echo "::error::target_repo invalido (esperado owner/repo): ${{ inputs.target_repo }}"
-            exit 1
-          fi
-          echo "run_seed=${{ inputs.run_seed }}"
-
-      - name: Baixar firmware da Storage
         env:
-          FILE_URL: ${{ inputs.file_url }}
+          VERSION: ${{ inputs.version }}
+          STAGING_SHA: ${{ inputs.staging_sha }}
+          TARGET_REPO: ${{ inputs.target_repo }}
+          RUN_SEED: ${{ inputs.run_seed }}
         run: |
           set -euo pipefail
-          curl -fsSL --retry 3 --max-time 120 -o firmware.bin "$FILE_URL"
+          if ! [[ "$VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+            echo "::error::Versao invalida (esperado X.Y.Z): $VERSION"
+            exit 1
+          fi
+          if ! [[ "$STAGING_SHA" =~ ^[a-f0-9]{40}$ ]]; then
+            echo "::error::staging_sha invalido (esperado 40 hex chars): $STAGING_SHA"
+            exit 1
+          fi
+          if ! [[ "$TARGET_REPO" =~ ^[^/]+/[^/]+$ ]]; then
+            echo "::error::target_repo invalido (esperado owner/repo): $TARGET_REPO"
+            exit 1
+          fi
+          if [[ -n "$RUN_SEED" && ! "$RUN_SEED" =~ ^[A-Za-z0-9._-]+$ ]]; then
+            echo "::error::run_seed invalido (apenas A-Za-z0-9._-): $RUN_SEED"
+            exit 1
+          fi
+          echo "run_seed=$RUN_SEED"
+
+      - name: Baixar firmware (Git blob)
+        env:
+          GH_TOKEN: ${{ github.token }}
+          SOURCE_REPO: ${{ github.repository }}
+          STAGING_SHA: ${{ inputs.staging_sha }}
+        run: |
+          set -euo pipefail
+          curl -fsSL --retry 3 --max-time 60 \
+            -H "Authorization: token ${GH_TOKEN}" \
+            -H "Accept: application/vnd.github+json" \
+            "https://api.github.com/repos/${SOURCE_REPO}/git/blobs/${STAGING_SHA}" \
+            -o /tmp/blob.json
+          ENCODING=$(jq -r '.encoding' /tmp/blob.json)
+          if [ "$ENCODING" != "base64" ]; then
+            echo "::error::Encoding inesperado: ${ENCODING}"
+            exit 1
+          fi
+          jq -r '.content' /tmp/blob.json | tr -d '\n' | base64 -d > firmware.bin
           BYTES=$(stat -c '%s' firmware.bin)
           echo "Tamanho: ${BYTES} bytes"
           if [ "$BYTES" -lt 1024 ]; then

@@ -40,12 +40,17 @@ export default function useGreenhouseData(greenhouseId) {
   }, [greenhouseId])
 
   const historicalArray = useMemo(() => {
-    const entries = Object.values(historico || {}).filter(
-      (item) => item && typeof item === 'object',
-    )
-    return entries.sort(
-      (a, b) => Number(a?.timestamp || 0) - Number(b?.timestamp || 0),
-    )
+    const entries = Object.values(historico || {})
+      .filter((item) => item && typeof item === 'object')
+      .map((item) => {
+        const raw = Number(item?.timestamp || 0)
+        if (!Number.isFinite(raw) || raw <= 0) return null
+        // RTDB historico stores Unix seconds; recharts/date-fns expect milliseconds.
+        const ms = raw < 1_000_000_000_000 ? raw * 1000 : raw
+        return { ...item, timestamp: ms }
+      })
+      .filter(Boolean)
+    return entries.sort((a, b) => a.timestamp - b.timestamp)
   }, [historico])
 
   const loading = Boolean(greenhouseId) && !(snapshotMeta.id === greenhouseId && snapshotMeta.ready)

@@ -1,7 +1,7 @@
 /**
  * LEDScheduleEditor.jsx — Djamor redesign.
  */
-import { useEffect, useState } from 'react'
+import { useState } from 'react'
 import toast from 'react-hot-toast'
 import { Lightbulb, Save, Sun, Timer } from 'lucide-react'
 import { updateGreenhouseNode } from '../../services/rtdb'
@@ -9,8 +9,6 @@ import { updateGreenhouseNode } from '../../services/rtdb'
 export default function LEDScheduleEditor({ greenhouseId, schedule = {} }) {
   const [local, setLocal] = useState(null)
   const [saving, setSaving] = useState(false)
-
-  useEffect(() => { setLocal(null) }, [schedule])
 
   const values = local ?? {
     scheduleEnabled: !!schedule.scheduleEnabled,

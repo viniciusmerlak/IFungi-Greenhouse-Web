@@ -13,30 +13,20 @@ function toCsv(rows, field) {
   return header + body
 }
 
-function normalizeTimestamp(value) {
-  const numeric = Number(value || 0)
-  if (!Number.isFinite(numeric) || numeric <= 0) return 0
-  // RTDB historico comes as Unix seconds; recharts/date-fns expects milliseconds.
-  return numeric < 1_000_000_000_000 ? numeric * 1000 : numeric
-}
-
 export default function HistoricalChart({ data = [] }) {
   const [field, setField] = useState('temperatura')
   const [range, setRange] = useState('24h')
   const [customStart, setCustomStart] = useState('')
   const [customEnd, setCustomEnd] = useState('')
 
-  const normalizedData = useMemo(
-    () =>
-      (Array.isArray(data) ? data : []).map((item) => ({
-        ...item,
-        timestamp: normalizeTimestamp(item?.timestamp),
-      })),
-    [data],
-  )
-
   const filtered = useMemo(() => {
+    // Hook already normalizes timestamps to ms and filters bogus entries.
+    const normalizedData = Array.isArray(data) ? data : []
     const now = new Date()
+    // Allow up to 1h of clock skew between device and browser before treating
+    // as bogus. Anything beyond that gets dropped so a stray future timestamp
+    // can't drag a phantom point to the right edge of the chart.
+    const futureCutoff = now.getTime() + 60 * 60 * 1000
     const start =
       range === '24h'
         ? subDays(now, 1).getTime()
@@ -47,12 +37,14 @@ export default function HistoricalChart({ data = [] }) {
             : customStart
               ? new Date(customStart).getTime()
               : 0
-    const end = range === 'custom' && customEnd ? new Date(customEnd).getTime() : Number.MAX_SAFE_INTEGER
+    const rangeEnd =
+      range === 'custom' && customEnd ? new Date(customEnd).getTime() : futureCutoff
+    const end = Math.min(rangeEnd, futureCutoff)
     return normalizedData.filter((item) => {
       const ts = Number(item.timestamp || 0)
       return ts >= start && ts <= end
     })
-  }, [customEnd, customStart, normalizedData, range])
+  }, [customEnd, customStart, data, range])
 
   const downloadCsv = () => {
     const blob = new Blob([toCsv(filtered, field)], { type: 'text/csv;charset=utf-8;' })

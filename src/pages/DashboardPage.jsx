@@ -145,17 +145,17 @@ export default function DashboardPage() {
                 manualActuators={data.manual_actuators}
               />
               <OperationModeEditor
-                key={`mode-${selectedId}-${data.operation_mode?.mode ?? 'manual'}`}
+                key={`mode-${selectedId}`}
                 greenhouseId={selectedId}
                 operationMode={data.operation_mode}
               />
               <LEDScheduleEditor
-                key={`led-${selectedId}-${data.led_schedule?.onHour ?? 0}-${data.led_schedule?.offHour ?? 0}`}
+                key={`led-${selectedId}`}
                 greenhouseId={selectedId}
                 schedule={data.led_schedule}
               />
               <SetpointsEditor
-                key={`sp-${selectedId}-${data.setpoints?.tMin ?? 0}-${data.setpoints?.tMax ?? 0}`}
+                key={`sp-${selectedId}`}
                 greenhouseId={selectedId}
                 setpoints={data.setpoints}
               />

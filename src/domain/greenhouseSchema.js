@@ -87,6 +87,7 @@ export function normalizeGreenhouseState(raw = {}) {
   return {
     sensores: raw.sensores || {},
     atuadores: raw.atuadores || {},
+    sensor_status: raw.sensor_status || {},
     setpoints: normalizeSetpoints(raw.setpoints || {}),
     led_schedule: normalizeLedSchedule(raw.led_schedule || {}),
     operation_mode: normalizeOperationMode(raw.operation_mode || {}),
@@ -95,6 +96,7 @@ export function normalizeGreenhouseState(raw = {}) {
     niveis: raw.niveis || {},
     debug_mode: Boolean(raw.debug_mode),
     manual_actuators: normalizeManualActuators(raw.manual_actuators || {}),
+    logs: raw.logs || {},
   }
 }
 

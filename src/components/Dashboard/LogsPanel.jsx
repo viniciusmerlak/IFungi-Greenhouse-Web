@@ -22,10 +22,28 @@ function LogRow({ entry }) {
   )
 }
 
+function toEntryArray(node) {
+  if (!node) return []
+  // RTDB stores logs.recent / logs.last_errors as either an array (sparse) or
+  // an object keyed by ring-buffer index ({ "11": {...}, "12": {...} }).
+  // Normalize both shapes to a plain array, sorted by their numeric key when
+  // available so newer entries (higher index) come last.
+  if (Array.isArray(node)) {
+    return node.filter((e) => e && typeof e === 'object')
+  }
+  if (typeof node === 'object') {
+    return Object.entries(node)
+      .filter(([, v]) => v && typeof v === 'object')
+      .sort(([a], [b]) => Number(a) - Number(b))
+      .map(([, v]) => v)
+  }
+  return []
+}
+
 export default function LogsPanel({ logs = {} }) {
   const [tab, setTab] = useState('recent')
-  const recent      = [...(logs.recent      ?? [])].reverse()
-  const last_errors = [...(logs.last_errors ?? [])].reverse()
+  const recent      = toEntryArray(logs?.recent).slice().reverse()
+  const last_errors = toEntryArray(logs?.last_errors).slice().reverse()
   const entries     = tab === 'errors' ? last_errors : recent
 
   return (

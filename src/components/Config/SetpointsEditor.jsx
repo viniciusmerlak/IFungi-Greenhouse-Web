@@ -1,7 +1,7 @@
 /**
  * SetpointsEditor.jsx — Djamor redesign.
  */
-import { useEffect, useState } from 'react'
+import { useState } from 'react'
 import toast from 'react-hot-toast'
 import { Target, Save, CircleDot } from 'lucide-react'
 import { updateGreenhouseNode } from '../../services/rtdb'
@@ -20,8 +20,6 @@ const FIELDS = [
 export default function SetpointsEditor({ greenhouseId, setpoints = {} }) {
   const [local, setLocal] = useState(null)
   const [saving, setSaving] = useState(false)
-
-  useEffect(() => { setLocal(null) }, [setpoints])
 
   const values = local ?? {
     tMin:    setpoints.tMin    ?? 20,

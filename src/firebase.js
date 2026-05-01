@@ -1,6 +1,7 @@
 import { initializeApp } from 'firebase/app'
 import { getAuth } from 'firebase/auth'
 import { getDatabase } from 'firebase/database'
+import { getStorage } from 'firebase/storage'
 
 const firebaseConfig = {
   apiKey: import.meta.env.VITE_FIREBASE_API_KEY || '',
@@ -17,13 +18,15 @@ const hasFirebaseConfig = Object.values(firebaseConfig).every(Boolean)
 let app = null
 let auth = null
 let db = null
+let storage = null
 
 if (hasFirebaseConfig) {
   app = initializeApp(firebaseConfig)
   auth = getAuth(app)
   db = getDatabase(app)
+  storage = getStorage(app)
 } else {
   console.warn('Firebase config ausente. Configure o arquivo .env para habilitar login e dados.')
 }
 
-export { app, auth, db, hasFirebaseConfig }
+export { app, auth, db, storage, hasFirebaseConfig }

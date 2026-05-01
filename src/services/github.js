@@ -1,14 +1,12 @@
 /**
  * @file github.js
- * @brief Servico de integracao com a API do GitHub (releases).
+ * @brief Servico de integracao com a API do GitHub.
  *
- * Funcoes:
- *  - getReleaseByTag     : verifica se uma release/tag ja existe
- *  - createRelease       : cria uma nova release
- *  - uploadReleaseAsset  : faz upload de um asset (.bin) para uma release
- *
- * O upload sempre define o nome do asset como `firmware.bin`, garantindo
- * que `browser_download_url` retorne uma URL terminando em `.bin`.
+ * O upload do `.bin` em `uploads.github.com` nao suporta CORS, portanto a
+ * publicacao da release acontece em GitHub Actions. O navegador apenas:
+ *   - dispara o workflow (`triggerWorkflowDispatch`)
+ *   - acompanha o run (`findRecentWorkflowRun`, `getWorkflowRun`)
+ *   - le a release publicada (`getReleaseByTag`)
  */
 
 import axios from 'axios'
@@ -19,6 +17,7 @@ const githubApi = (token) =>
     headers: {
       Authorization: `token ${token}`,
       Accept: 'application/vnd.github+json',
+      'X-GitHub-Api-Version': '2022-11-28',
     },
   })
 
@@ -46,32 +45,33 @@ export async function getReleaseByTag(token, repoFullName, tag) {
   }
 }
 
-export async function createRelease(token, repoFullName, tagName, body = '') {
+export async function triggerWorkflowDispatch(token, sourceRepo, workflowFile, ref, inputs) {
   const client = githubApi(token)
-  const repo = normalizeRepoFullName(repoFullName)
-  const { data } = await client.post(`/repos/${repo}/releases`, {
-    tag_name: tagName,
-    name: `IFungi Firmware ${tagName}`,
-    body,
-    draft: false,
-    prerelease: false,
+  const repo = normalizeRepoFullName(sourceRepo)
+  await client.post(`/repos/${repo}/actions/workflows/${workflowFile}/dispatches`, {
+    ref,
+    inputs,
   })
-  return data
 }
 
-export async function uploadReleaseAsset(token, uploadUrl, file, onProgress) {
-  const cleanUrl = uploadUrl.replace('{?name,label}', '')
-  const { data } = await axios.post(`${cleanUrl}?name=firmware.bin`, file, {
-    headers: {
-      Authorization: `token ${token}`,
-      'Content-Type': 'application/octet-stream',
-      Accept: 'application/vnd.github+json',
-    },
-    onUploadProgress: (event) => {
-      if (event.total && onProgress) {
-        onProgress(Math.round((event.loaded * 100) / event.total))
-      }
-    },
-  })
+export async function findRecentWorkflowRun(token, sourceRepo, workflowFile, sinceIso, runSeed) {
+  const client = githubApi(token)
+  const repo = normalizeRepoFullName(sourceRepo)
+  const { data } = await client.get(
+    `/repos/${repo}/actions/workflows/${workflowFile}/runs`,
+    { params: { event: 'workflow_dispatch', per_page: 20, created: `>=${sinceIso}` } },
+  )
+  const runs = data?.workflow_runs || []
+  if (runSeed) {
+    const match = runs.find((r) => (r.display_title || '').includes(runSeed) || (r.name || '').includes(runSeed))
+    if (match) return match
+  }
+  return runs[0] || null
+}
+
+export async function getWorkflowRun(token, sourceRepo, runId) {
+  const client = githubApi(token)
+  const repo = normalizeRepoFullName(sourceRepo)
+  const { data } = await client.get(`/repos/${repo}/actions/runs/${runId}`)
   return data
 }

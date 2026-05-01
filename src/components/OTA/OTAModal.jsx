@@ -2,22 +2,45 @@
  * OTAModal.jsx
  * Painel unificado de atualizacao OTA.
  *
- * Pipeline completa, executada totalmente pelo navegador:
- *   1. Recebe o arquivo .bin diretamente do usuario (drag & drop / file input).
- *   2. Valida a versao (formato X.Y.Z) e checa se a tag ja existe no GitHub.
- *   3. Cria uma release no repositorio configurado.
- *   4. Faz upload do .bin como asset da release com o nome `firmware.bin`,
- *      garantindo que a URL final termine em `.bin` (sem zipar).
- *   5. Pega a `browser_download_url` retornada pelo GitHub e escreve em
- *      `/greenhouses/{greenhouseId}/ota` no Firebase Realtime Database.
+ * Pipeline:
+ *   1. Navegador faz upload do .bin para Firebase Storage (buffer temporario).
+ *   2. Navegador dispara workflow_dispatch em `publish-ota.yml` no proprio repo,
+ *      passando { version, file_url, target_repo, run_seed }.
+ *   3. Workflow baixa o .bin da Storage, cria a release em `target_repo` e
+ *      sobe o asset com nome `firmware.bin` (server-side, sem CORS).
+ *   4. Navegador faz polling do run ate completar; le a release via API
+ *      (api.github.com suporta CORS) e grava `available/version/url/notes/
+ *      lastPublishedAt` em `/greenhouses/{greenhouseId}/ota`.
+ *   5. Navegador apaga o .bin da Storage.
  *
- * O ESP32 detecta a atualizacao e baixa o firmware diretamente da URL.
+ * O upload direto pra `uploads.github.com` foi removido porque o GitHub nao
+ * envia headers CORS nesse endpoint.
  */
 import { useCallback, useState } from 'react'
 import { useDropzone } from 'react-dropzone'
 import toast from 'react-hot-toast'
-import { createRelease, getReleaseByTag, uploadReleaseAsset } from '../../services/github'
+import {
+  findRecentWorkflowRun,
+  getReleaseByTag,
+  getWorkflowRun,
+  triggerWorkflowDispatch,
+} from '../../services/github'
 import { updateGreenhouseNode } from '../../services/rtdb'
+import { buildStagingPath, deleteStagingBin, uploadStagingBin } from '../../services/storage'
+
+const SOURCE_REPO = 'viniciusmerlak/IFungi-Greenhouse-Web'
+const WORKFLOW_FILE = 'publish-ota.yml'
+const WORKFLOW_REF = 'main'
+const POLL_INTERVAL_MS = 5000
+const POLL_TIMEOUT_MS = 10 * 60 * 1000
+
+function sleep(ms) {
+  return new Promise((resolve) => setTimeout(resolve, ms))
+}
+
+function randomSeed() {
+  return `ifungi-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`
+}
 
 const S = {
   overlay: {
@@ -113,6 +136,7 @@ function PublishForm({ greenhouseId, ota }) {
   const [repo, setRepo] = useState(localStorage.getItem('ifungi_repo') || '')
   const [file, setFile] = useState(null)
   const [progress, setProgress] = useState(0)
+  const [stage, setStage] = useState('')
   const [loading, setLoading] = useState(false)
   const [publishedUrl, setPublishedUrl] = useState('')
 
@@ -149,26 +173,71 @@ function PublishForm({ greenhouseId, ota }) {
     setProgress(0)
     setPublishedUrl('')
 
-    try {
-      const tag = `v${version}`
+    const tag = `v${version}`
+    const seed = randomSeed()
+    const stagingPath = buildStagingPath(greenhouseId, version)
+    let stagingUploaded = false
 
+    try {
       const existing = await getReleaseByTag(token, repo, tag)
       if (existing) {
         toast.error(`Release ${tag} ja existe no GitHub. Use outra versao.`)
         return
       }
 
-      const release = await createRelease(
-        token,
-        repo,
-        tag,
-        `IFungi Firmware ${tag} - publicado em ${new Date().toISOString()}`,
-      )
+      setStage('Subindo .bin para a Storage')
+      const stagingUrl = await uploadStagingBin(stagingPath, file, (pct) => setProgress(Math.round(pct * 0.4)))
+      stagingUploaded = true
 
-      const renamedFile = new File([file], 'firmware.bin', { type: file.type })
-      const asset = await uploadReleaseAsset(token, release.upload_url, renamedFile, setProgress)
+      setStage('Disparando GitHub Actions')
+      const dispatchedAt = new Date()
+      await triggerWorkflowDispatch(token, SOURCE_REPO, WORKFLOW_FILE, WORKFLOW_REF, {
+        version,
+        file_url: stagingUrl,
+        target_repo: repo,
+        run_seed: seed,
+      })
+      setProgress(45)
+
+      setStage('Aguardando workflow comecar')
+      let run = null
+      const sinceIso = new Date(dispatchedAt.getTime() - 60_000).toISOString()
+      const findDeadline = Date.now() + 60_000
+      while (Date.now() < findDeadline) {
+        await sleep(POLL_INTERVAL_MS)
+        run = await findRecentWorkflowRun(token, SOURCE_REPO, WORKFLOW_FILE, sinceIso, seed)
+        if (run) break
+      }
+      if (!run) throw new Error('Nao consegui localizar o run do workflow no GitHub Actions')
+      setProgress(55)
+
+      setStage('GitHub Actions executando')
+      const runDeadline = Date.now() + POLL_TIMEOUT_MS
+      while (Date.now() < runDeadline) {
+        const status = await getWorkflowRun(token, SOURCE_REPO, run.id)
+        if (status.status === 'completed') {
+          if (status.conclusion !== 'success') {
+            throw new Error(`Workflow terminou com status "${status.conclusion}". Veja os logs em ${status.html_url}`)
+          }
+          run = status
+          break
+        }
+        setProgress((p) => Math.min(85, p + 2))
+        await sleep(POLL_INTERVAL_MS)
+      }
+      if (run.status !== 'completed') throw new Error('Timeout aguardando o workflow terminar')
+      setProgress(90)
+
+      setStage('Verificando release no GitHub')
+      const release = await getReleaseByTag(token, repo, tag)
+      const asset = release?.assets?.find((a) => a.name === 'firmware.bin')
+      if (!asset?.browser_download_url) {
+        throw new Error('Release publicada mas sem asset firmware.bin. Veja os logs do workflow.')
+      }
       const downloadUrl = asset.browser_download_url
+      setProgress(95)
 
+      setStage('Atualizando Firebase')
       await updateGreenhouseNode(greenhouseId, 'ota', {
         available: true,
         version,
@@ -177,13 +246,18 @@ function PublishForm({ greenhouseId, ota }) {
         lastPublishedAt: Math.floor(Date.now() / 1000),
       })
 
+      setProgress(100)
       setPublishedUrl(downloadUrl)
       toast.success('OTA publicada e Firebase atualizado!')
     } catch (err) {
       const msg = err?.response?.data?.message || err.message
       toast.error(msg || 'Falha ao publicar OTA')
     } finally {
+      if (stagingUploaded) {
+        deleteStagingBin(stagingPath)
+      }
       setLoading(false)
+      setStage('')
     }
   }
 
@@ -221,13 +295,14 @@ function PublishForm({ greenhouseId, ota }) {
       <div style={S.infoBox}>
         <strong>Pipeline OTA</strong>
         <br />
-        O navegador cria a release no GitHub, faz upload do <code>firmware.bin</code> como asset
-        (URL final termina em <code>.bin</code>) e grava a URL em{' '}
-        <code>greenhouses/{'{id}'}/ota</code> no Firebase.
+        O navegador sobe o <code>.bin</code> pra Firebase Storage, dispara o workflow{' '}
+        <code>publish-ota.yml</code> no GitHub Actions (que cria a release com asset{' '}
+        <code>firmware.bin</code>), e grava a URL final em{' '}
+        <code>greenhouses/{'{id}'}/ota</code>.
       </div>
 
       <div style={S.field}>
-        <label style={S.label}>PAT GitHub (contents:write)</label>
+        <label style={S.label}>PAT GitHub (actions:write em IFungi-Greenhouse-Web)</label>
         <input
           style={S.input}
           type="password"
@@ -280,7 +355,7 @@ function PublishForm({ greenhouseId, ota }) {
         <div>
           <div style={{ ...S.statusRow, marginBottom: '0.4rem' }}>
             <div style={S.dot('#a78bfa')} />
-            <span>Enviando... {progress}%</span>
+            <span>{stage || 'Enviando'}... {progress}%</span>
           </div>
           <div style={S.progress}>
             <div style={S.progressBar(progress)} />

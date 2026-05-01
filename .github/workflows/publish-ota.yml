@@ -1,0 +1,121 @@
+name: Publish OTA Release
+
+on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: 'Versao semver (X.Y.Z)'
+        required: true
+      file_url:
+        description: 'URL publica para baixar o .bin (Firebase Storage)'
+        required: true
+      target_repo:
+        description: 'Repositorio onde publicar a release (owner/repo)'
+        required: true
+      run_seed:
+        description: 'Identificador correlacao (preenchido pelo navegador)'
+        required: false
+        default: ''
+
+permissions:
+  contents: read
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Validar inputs
+        run: |
+          set -euo pipefail
+          if ! [[ "${{ inputs.version }}" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+            echo "::error::Versao invalida (esperado X.Y.Z): ${{ inputs.version }}"
+            exit 1
+          fi
+          if ! [[ "${{ inputs.target_repo }}" =~ ^[^/]+/[^/]+$ ]]; then
+            echo "::error::target_repo invalido (esperado owner/repo): ${{ inputs.target_repo }}"
+            exit 1
+          fi
+          echo "run_seed=${{ inputs.run_seed }}"
+
+      - name: Baixar firmware da Storage
+        env:
+          FILE_URL: ${{ inputs.file_url }}
+        run: |
+          set -euo pipefail
+          curl -fsSL --retry 3 --max-time 120 -o firmware.bin "$FILE_URL"
+          BYTES=$(stat -c '%s' firmware.bin)
+          echo "Tamanho: ${BYTES} bytes"
+          if [ "$BYTES" -lt 1024 ]; then
+            echo "::error::Arquivo muito pequeno (${BYTES} bytes). Abortando."
+            exit 1
+          fi
+          MAGIC=$(head -c1 firmware.bin | xxd -p)
+          if [ "$MAGIC" != "e9" ]; then
+            echo "::warning::Primeiro byte nao e 0xE9 (esp32 magic). Encontrado: 0x${MAGIC}"
+          fi
+
+      - name: Verificar tag livre
+        env:
+          GH_TOKEN: ${{ secrets.OTA_GITHUB_TOKEN }}
+          TARGET_REPO: ${{ inputs.target_repo }}
+          VERSION: ${{ inputs.version }}
+        run: |
+          set -euo pipefail
+          STATUS=$(curl -s -o /tmp/get.json -w "%{http_code}" \
+            -H "Authorization: token ${GH_TOKEN}" \
+            -H "Accept: application/vnd.github+json" \
+            "https://api.github.com/repos/${TARGET_REPO}/releases/tags/v${VERSION}")
+          if [ "$STATUS" = "200" ]; then
+            echo "::error::Release v${VERSION} ja existe em ${TARGET_REPO}. Use outra versao."
+            exit 1
+          fi
+          if [ "$STATUS" != "404" ]; then
+            echo "::error::GitHub respondeu ${STATUS} ao consultar a tag. Conteudo:"
+            cat /tmp/get.json
+            exit 1
+          fi
+          echo "Tag livre."
+
+      - name: Criar release
+        id: create
+        env:
+          GH_TOKEN: ${{ secrets.OTA_GITHUB_TOKEN }}
+          TARGET_REPO: ${{ inputs.target_repo }}
+          VERSION: ${{ inputs.version }}
+          RUN_SEED: ${{ inputs.run_seed }}
+        run: |
+          set -euo pipefail
+          BODY="IFungi Firmware v${VERSION} - publicado em $(date -u -Iseconds) (run_seed=${RUN_SEED})"
+          PAYLOAD=$(jq -n --arg tag "v${VERSION}" --arg name "IFungi Firmware v${VERSION}" --arg body "$BODY" \
+            '{tag_name:$tag, name:$name, body:$body, draft:false, prerelease:false}')
+          curl -fsSL -X POST \
+            -H "Authorization: token ${GH_TOKEN}" \
+            -H "Accept: application/vnd.github+json" \
+            -H "Content-Type: application/json" \
+            -d "$PAYLOAD" \
+            "https://api.github.com/repos/${TARGET_REPO}/releases" \
+            -o /tmp/release.json
+          UPLOAD_URL=$(jq -r '.upload_url' /tmp/release.json | sed 's/{?name,label}//')
+          RELEASE_ID=$(jq -r '.id' /tmp/release.json)
+          echo "upload_url=${UPLOAD_URL}" >> "$GITHUB_OUTPUT"
+          echo "release_id=${RELEASE_ID}" >> "$GITHUB_OUTPUT"
+
+      - name: Subir firmware.bin como asset
+        env:
+          GH_TOKEN: ${{ secrets.OTA_GITHUB_TOKEN }}
+          UPLOAD_URL: ${{ steps.create.outputs.upload_url }}
+        run: |
+          set -euo pipefail
+          curl -fsSL -X POST \
+            -H "Authorization: token ${GH_TOKEN}" \
+            -H "Accept: application/vnd.github+json" \
+            -H "Content-Type: application/octet-stream" \
+            --data-binary @firmware.bin \
+            "${UPLOAD_URL}?name=firmware.bin" \
+            -o /tmp/asset.json
+          DOWNLOAD_URL=$(jq -r '.browser_download_url' /tmp/asset.json)
+          if ! [[ "$DOWNLOAD_URL" == *"/firmware.bin" ]]; then
+            echo "::error::URL final nao termina em /firmware.bin: $DOWNLOAD_URL"
+            exit 1
+          fi
+          echo "::notice::Asset publicado: $DOWNLOAD_URL"

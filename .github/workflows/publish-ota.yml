@@ -25,17 +25,25 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Validar inputs
+        env:
+          VERSION: ${{ inputs.version }}
+          TARGET_REPO: ${{ inputs.target_repo }}
+          RUN_SEED: ${{ inputs.run_seed }}
         run: |
           set -euo pipefail
-          if ! [[ "${{ inputs.version }}" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
-            echo "::error::Versao invalida (esperado X.Y.Z): ${{ inputs.version }}"
+          if ! [[ "$VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+            echo "::error::Versao invalida (esperado X.Y.Z): $VERSION"
             exit 1
           fi
-          if ! [[ "${{ inputs.target_repo }}" =~ ^[^/]+/[^/]+$ ]]; then
-            echo "::error::target_repo invalido (esperado owner/repo): ${{ inputs.target_repo }}"
+          if ! [[ "$TARGET_REPO" =~ ^[^/]+/[^/]+$ ]]; then
+            echo "::error::target_repo invalido (esperado owner/repo): $TARGET_REPO"
             exit 1
           fi
-          echo "run_seed=${{ inputs.run_seed }}"
+          if [[ -n "$RUN_SEED" && ! "$RUN_SEED" =~ ^[A-Za-z0-9._-]+$ ]]; then
+            echo "::error::run_seed invalido (apenas A-Za-z0-9._-): $RUN_SEED"
+            exit 1
+          fi
+          echo "run_seed=$RUN_SEED"
 
       - name: Baixar firmware da Storage
         env:

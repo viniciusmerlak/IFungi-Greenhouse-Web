@@ -23,37 +23,31 @@ Crie um arquivo `.env` baseado em `.env.example`:
 - `VITE_FIREBASE_MESSAGING_SENDER_ID`
 - `VITE_FIREBASE_APP_ID`
 
-## OTA via GitHub Actions (recomendado)
+## Pipeline OTA (modo unico, pelo navegador)
 
-O workflow `.github/workflows/publish-ota.yml` automatiza:
+A publicacao OTA e feita inteiramente pelo navegador, em uma unica pipeline:
 
-1. download do `firmware.bin` a partir de uma URL direta;
-2. criacao de release/tag no GitHub;
-3. upload do `firmware.bin` no release;
-4. atualizacao de `greenhouses/{greenhouse_id}/ota` no Firebase com a URL final.
+1. usuario seleciona o `.bin` via drag & drop e informa versao + repositorio;
+2. o painel verifica se a tag `vX.Y.Z` ja existe no GitHub;
+3. cria uma release no repositorio configurado;
+4. faz upload do `.bin` como asset com nome `firmware.bin` (NAO zipado), de forma
+   que a `browser_download_url` retornada termina em `/firmware.bin`;
+5. grava em `greenhouses/{greenhouse_id}/ota` no Firebase Realtime Database:
 
-### Secrets necessarios
+   ```json
+   {
+     "available": true,
+     "version": "1.2.5",
+     "url": "https://github.com/<owner>/<repo>/releases/download/v1.2.5/firmware.bin",
+     "notes": "Publicado em <data>",
+     "lastPublishedAt": 1777645282
+   }
+   ```
 
-Configure em `Settings > Secrets and variables > Actions`:
+O ESP32 le esse no e baixa o firmware diretamente da URL.
 
-- `OTA_GITHUB_TOKEN`: PAT com permissao para criar release no repositorio de OTA;
-- `FIREBASE_DATABASE_URL`: ex. `https://pfi-ifungi-default-rtdb.firebaseio.com`;
-- `FIREBASE_DB_SECRET`: segredo/token para escrita REST no Realtime Database.
+### Token GitHub
 
-### Como executar o workflow
-
-No GitHub:
-
-1. abra `Actions > Publish OTA Firmware`;
-2. clique em `Run workflow`;
-3. preencha:
-   - `version` (ex. `1.1.2`)
-   - `greenhouse_id` (ex. `IFUNGI-EC:62:60:99:E7:0C`)
-   - `firmware_url` (link direto do `.bin`)
-   - `release_repo` (ex. `viniciusmerlak/IFUNGI-OTA-UPDATES`)
-
-Ao final, o workflow exibe no resumo a URL final do firmware publicada no release.
-
-## OTA manual pelo navegador (fallback)
-
-Existe fluxo manual na UI para testes, mas nao e o fluxo recomendado para producao porque depende de token no browser e pode sofrer com erros de configuracao/CORS.
+Necessario um Personal Access Token (PAT) com permissao `contents:write` no
+repositorio de releases (ex.: `viniciusmerlak/IFUNGI-OTA-UPDATES`). O token e
+armazenado apenas no `localStorage` do navegador.

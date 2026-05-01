@@ -7,8 +7,8 @@ on:
       version:
         description: 'Versao semver (X.Y.Z)'
         required: true
-      file_url:
-        description: 'URL publica para baixar o .bin (Firebase Storage)'
+      staging_sha:
+        description: 'SHA do Git blob com o firmware no proprio repo (40 hex chars)'
         required: true
       target_repo:
         description: 'Repositorio onde publicar a release (owner/repo)'
@@ -28,12 +28,17 @@ jobs:
       - name: Validar inputs
         env:
           VERSION: ${{ inputs.version }}
+          STAGING_SHA: ${{ inputs.staging_sha }}
           TARGET_REPO: ${{ inputs.target_repo }}
           RUN_SEED: ${{ inputs.run_seed }}
         run: |
           set -euo pipefail
           if ! [[ "$VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
             echo "::error::Versao invalida (esperado X.Y.Z): $VERSION"
+            exit 1
+          fi
+          if ! [[ "$STAGING_SHA" =~ ^[a-f0-9]{40}$ ]]; then
+            echo "::error::staging_sha invalido (esperado 40 hex chars): $STAGING_SHA"
             exit 1
           fi
           if ! [[ "$TARGET_REPO" =~ ^[^/]+/[^/]+$ ]]; then
@@ -46,12 +51,24 @@ jobs:
           fi
           echo "run_seed=$RUN_SEED"
 
-      - name: Baixar firmware da Storage
+      - name: Baixar firmware (Git blob)
         env:
-          FILE_URL: ${{ inputs.file_url }}
+          GH_TOKEN: ${{ github.token }}
+          SOURCE_REPO: ${{ github.repository }}
+          STAGING_SHA: ${{ inputs.staging_sha }}
         run: |
           set -euo pipefail
-          curl -fsSL --retry 3 --max-time 120 -o firmware.bin "$FILE_URL"
+          curl -fsSL --retry 3 --max-time 60 \
+            -H "Authorization: token ${GH_TOKEN}" \
+            -H "Accept: application/vnd.github+json" \
+            "https://api.github.com/repos/${SOURCE_REPO}/git/blobs/${STAGING_SHA}" \
+            -o /tmp/blob.json
+          ENCODING=$(jq -r '.encoding' /tmp/blob.json)
+          if [ "$ENCODING" != "base64" ]; then
+            echo "::error::Encoding inesperado: ${ENCODING}"
+            exit 1
+          fi
+          jq -r '.content' /tmp/blob.json | tr -d '\n' | base64 -d > firmware.bin
           BYTES=$(stat -c '%s' firmware.bin)
           echo "Tamanho: ${BYTES} bytes"
           if [ "$BYTES" -lt 1024 ]; then

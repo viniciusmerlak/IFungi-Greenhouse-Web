@@ -1,4 +1,5 @@
 name: Publish OTA Release
+run-name: "Publish OTA v${{ inputs.version }} (${{ inputs.run_seed }})"
 
 on:
   workflow_dispatch:

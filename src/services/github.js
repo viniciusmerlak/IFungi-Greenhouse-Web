@@ -2,11 +2,14 @@
  * @file github.js
  * @brief Servico de integracao com a API do GitHub.
  *
- * O upload do `.bin` em `uploads.github.com` nao suporta CORS, portanto a
- * publicacao da release acontece em GitHub Actions. O navegador apenas:
- *   - dispara o workflow (`triggerWorkflowDispatch`)
- *   - acompanha o run (`findRecentWorkflowRun`, `getWorkflowRun`)
- *   - le a release publicada (`getReleaseByTag`)
+ * Como `uploads.github.com` (asset upload) nao envia headers CORS, todo o
+ * fluxo do navegador acontece via `api.github.com`, que suporta CORS:
+ *   - `createBlob`: faz upload do `.bin` como Git blob no repo da pipeline
+ *     (objeto dangling, garbage-coletado pelo GitHub)
+ *   - `triggerWorkflowDispatch`: dispara o workflow `publish-ota.yml` que,
+ *     server-side, baixa o blob e publica a release com o asset
+ *   - `findRecentWorkflowRun`/`getWorkflowRun`: polling do run
+ *   - `getReleaseByTag`: le a release final ja publicada
  */
 
 import axios from 'axios'
@@ -20,6 +23,25 @@ const githubApi = (token) =>
       'X-GitHub-Api-Version': '2022-11-28',
     },
   })
+
+/**
+ * Cria um Git blob com o conteudo base64 e retorna o SHA. O blob nao e
+ * referenciado por nenhum commit (dangling object) e o GitHub fara GC dele
+ * eventualmente. Usado como buffer temporario para passar o `.bin` ao
+ * workflow sem depender de upload direto (CORS) ou storage externa.
+ *
+ * Endpoint: POST /repos/{owner}/{repo}/git/blobs (api.github.com -> CORS OK).
+ * Permissao necessaria no PAT: contents:write no `repo`.
+ */
+export async function createBlob(token, repo, base64Content) {
+  const client = githubApi(token)
+  const r = normalizeRepoFullName(repo)
+  const { data } = await client.post(`/repos/${r}/git/blobs`, {
+    content: base64Content,
+    encoding: 'base64',
+  })
+  return data.sha
+}
 
 function normalizeRepoFullName(repoInput) {
   const value = String(repoInput || '').trim().replace(/\/+$/, '')

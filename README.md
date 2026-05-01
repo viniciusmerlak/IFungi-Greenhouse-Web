@@ -28,27 +28,33 @@ Crie um arquivo `.env` baseado em `.env.example`:
 > repositorio (`Settings > Secrets and variables > Actions`) e adicione um passo
 > `env:` antes do `npm run build` nos workflows `.github/workflows/firebase-hosting-*.yml`.
 
-## Pipeline OTA (single browser flow + GitHub Actions)
+## Pipeline OTA (single browser flow, 100% gratuito)
 
 A publicacao OTA e iniciada inteiramente pelo navegador. Como o GitHub nao
 suporta CORS no endpoint de upload (`uploads.github.com`), o asset e enviado
 server-side por uma GitHub Action; o navegador apenas dispara e acompanha.
+A pipeline nao usa Firebase Storage nem qualquer servico pago: o `.bin` e
+enviado para a propria API do GitHub (Git blob) que suporta CORS.
 
 ```text
 [Navegador]
-  | (1) upload .bin -> Firebase Storage (ota-staging/{id}/{ts}.bin)
-  | (2) workflow_dispatch publish-ota.yml { version, file_url, target_repo, run_seed }
+  | (1) le .bin, base64-encode
+  | (2) POST /repos/{source}/git/blobs (api.github.com -> CORS OK) -> staging_sha
+  | (3) workflow_dispatch publish-ota.yml { version, staging_sha, target_repo, run_seed }
   v
 [GitHub Actions runner]
-  | (3) curl file_url -> firmware.bin
-  | (4) POST /repos/{target}/releases (cria release v{version})
-  | (5) POST uploads.github.com/.../assets?name=firmware.bin (sobe asset)
+  | (4) GET /repos/{source}/git/blobs/{sha} -> firmware.bin (valida tamanho + magic 0xE9)
+  | (5) POST /repos/{target}/releases (cria release v{version})
+  | (6) POST uploads.github.com/.../assets?name=firmware.bin (sobe asset, server-side)
   v
 [Navegador] (poll do run termina com success)
-  | (6) GET /repos/{target}/releases/tags/v{version}
-  | (7) RTDB greenhouses/{id}/ota.set({ available, version, url, notes, lastPublishedAt })
-  | (8) deleta ota-staging/{id}/{ts}.bin
+  | (7) GET /repos/{target}/releases/tags/v{version}
+  | (8) RTDB greenhouses/{id}/ota.set({ available, version, url, notes, lastPublishedAt })
 ```
+
+O Git blob criado no passo 2 nao e referenciado por nenhum commit (dangling
+object) e e removido pelo garbage collector do GitHub no proximo ciclo, sem
+poluir o historico do repositorio.
 
 Schema gravado em `greenhouses/{greenhouse_id}/ota`:
 
@@ -66,25 +72,16 @@ O ESP32 le esse no e baixa o firmware diretamente da URL.
 
 ### Tokens e secrets necessarios
 
-- **PAT do navegador** (input no formulario, guardado em `localStorage`): precisa de
-  permissao `actions: write` no repositorio fonte (`viniciusmerlak/IFungi-Greenhouse-Web`)
-  para disparar o workflow.
+- **PAT do navegador** (input no formulario, guardado em `localStorage`):
+  PAT com `contents: write` (criar Git blob) e `actions: write` (disparar
+  workflow), ambos em `viniciusmerlak/IFungi-Greenhouse-Web`.
 - **Secret `OTA_GITHUB_TOKEN`** (em `Settings > Secrets > Actions` deste repo):
   PAT com `contents: write` no repo de releases (ex.: `viniciusmerlak/IFUNGI-OTA-UPDATES`).
   Usado pelo workflow para criar a release e subir o asset.
 
-### Storage rules
-
-`storage.rules` permite escrita autenticada em `ota-staging/{id}/*.bin` e leitura
-publica (necessario para o runner do GitHub Actions baixar via download URL).
-
-Deploy:
-
-```bash
-npx firebase-tools@latest deploy --only storage --project pfi-ifungi
-```
-
 ### Workflow
 
 Arquivo: `.github/workflows/publish-ota.yml`. Trigger: `workflow_dispatch`.
-Inputs: `version`, `file_url`, `target_repo`, `run_seed`.
+Inputs: `version`, `staging_sha`, `target_repo`, `run_seed`. Lembre que o
+GitHub indexa workflows pelo arquivo na branch padrao -- por isso o YAML
+precisa estar em `main` para que o navegador consiga dispatchar via API.

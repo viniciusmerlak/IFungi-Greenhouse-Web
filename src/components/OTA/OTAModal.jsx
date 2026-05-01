@@ -2,31 +2,35 @@
  * OTAModal.jsx
  * Painel unificado de atualizacao OTA.
  *
- * Pipeline:
- *   1. Navegador faz upload do .bin para Firebase Storage (buffer temporario).
- *   2. Navegador dispara workflow_dispatch em `publish-ota.yml` no proprio repo,
- *      passando { version, file_url, target_repo, run_seed }.
- *   3. Workflow baixa o .bin da Storage, cria a release em `target_repo` e
- *      sobe o asset com nome `firmware.bin` (server-side, sem CORS).
- *   4. Navegador faz polling do run ate completar; le a release via API
- *      (api.github.com suporta CORS) e grava `available/version/url/notes/
- *      lastPublishedAt` em `/greenhouses/{greenhouseId}/ota`.
- *   5. Navegador apaga o .bin da Storage.
+ * Pipeline (100% gratuita, sem Firebase Storage):
+ *   1. Navegador le o .bin, converte pra base64 e cria um Git blob em
+ *      `viniciusmerlak/IFungi-Greenhouse-Web` via POST /git/blobs
+ *      (api.github.com suporta CORS). O blob e dangling -- nenhum commit o
+ *      referencia, entao o GC do GitHub remove no proximo ciclo.
+ *   2. Navegador dispara `workflow_dispatch` em `publish-ota.yml` passando
+ *      { version, staging_sha, target_repo, run_seed }.
+ *   3. Workflow (server-side, sem restricao de CORS) baixa o blob via
+ *      /git/blobs/{sha}, valida tamanho/magic, cria a release em
+ *      `target_repo` e sobe o asset com nome `firmware.bin`.
+ *   4. Navegador faz polling do run ate completar, le a release via
+ *      /releases/tags/{tag} e grava
+ *      { available, version, url, notes, lastPublishedAt } em
+ *      /greenhouses/{greenhouseId}/ota.
  *
  * O upload direto pra `uploads.github.com` foi removido porque o GitHub nao
- * envia headers CORS nesse endpoint.
+ * envia headers CORS nesse endpoint -- por isso a passagem pelo workflow.
  */
 import { useCallback, useState } from 'react'
 import { useDropzone } from 'react-dropzone'
 import toast from 'react-hot-toast'
 import {
+  createBlob,
   findRecentWorkflowRun,
   getReleaseByTag,
   getWorkflowRun,
   triggerWorkflowDispatch,
 } from '../../services/github'
 import { updateGreenhouseNode } from '../../services/rtdb'
-import { buildStagingPath, deleteStagingBin, uploadStagingBin } from '../../services/storage'
 
 const SOURCE_REPO = 'viniciusmerlak/IFungi-Greenhouse-Web'
 const WORKFLOW_FILE = 'publish-ota.yml'
@@ -40,6 +44,23 @@ function sleep(ms) {
 
 function randomSeed() {
   return `ifungi-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`
+}
+
+/**
+ * Le o File como base64 (sem o prefixo `data:...;base64,`).
+ * O resultado eh enviado pra POST /git/blobs com encoding=base64.
+ */
+function fileToBase64(file) {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader()
+    reader.onload = () => {
+      const result = String(reader.result || '')
+      const idx = result.indexOf(',')
+      resolve(idx >= 0 ? result.slice(idx + 1) : result)
+    }
+    reader.onerror = () => reject(reader.error)
+    reader.readAsDataURL(file)
+  })
 }
 
 const S = {
@@ -175,8 +196,6 @@ function PublishForm({ greenhouseId, ota }) {
 
     const tag = `v${version}`
     const seed = randomSeed()
-    const stagingPath = buildStagingPath(greenhouseId, version)
-    let stagingUploaded = false
 
     try {
       const existing = await getReleaseByTag(token, repo, tag)
@@ -185,15 +204,20 @@ function PublishForm({ greenhouseId, ota }) {
         return
       }
 
-      setStage('Subindo .bin para a Storage')
-      const stagingUrl = await uploadStagingBin(stagingPath, file, (pct) => setProgress(Math.round(pct * 0.4)))
-      stagingUploaded = true
+      setStage('Lendo .bin')
+      setProgress(10)
+      const base64 = await fileToBase64(file)
+      setProgress(25)
+
+      setStage('Subindo .bin como Git blob')
+      const stagingSha = await createBlob(token, SOURCE_REPO, base64)
+      setProgress(40)
 
       setStage('Disparando GitHub Actions')
       const dispatchedAt = new Date()
       await triggerWorkflowDispatch(token, SOURCE_REPO, WORKFLOW_FILE, WORKFLOW_REF, {
         version,
-        file_url: stagingUrl,
+        staging_sha: stagingSha,
         target_repo: repo,
         run_seed: seed,
       })
@@ -253,9 +277,6 @@ function PublishForm({ greenhouseId, ota }) {
       const msg = err?.response?.data?.message || err.message
       toast.error(msg || 'Falha ao publicar OTA')
     } finally {
-      if (stagingUploaded) {
-        deleteStagingBin(stagingPath)
-      }
       setLoading(false)
       setStage('')
     }
@@ -295,14 +316,14 @@ function PublishForm({ greenhouseId, ota }) {
       <div style={S.infoBox}>
         <strong>Pipeline OTA</strong>
         <br />
-        O navegador sobe o <code>.bin</code> pra Firebase Storage, dispara o workflow{' '}
+        O navegador sobe o <code>.bin</code> como Git blob via API, dispara o workflow{' '}
         <code>publish-ota.yml</code> no GitHub Actions (que cria a release com asset{' '}
         <code>firmware.bin</code>), e grava a URL final em{' '}
         <code>greenhouses/{'{id}'}/ota</code>.
       </div>
 
       <div style={S.field}>
-        <label style={S.label}>PAT GitHub (actions:write em IFungi-Greenhouse-Web)</label>
+        <label style={S.label}>PAT GitHub (contents:write + actions:write em IFungi-Greenhouse-Web)</label>
         <input
           style={S.input}
           type="password"

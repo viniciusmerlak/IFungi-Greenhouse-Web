@@ -1,6 +1,7 @@
 import { useMemo, useState } from 'react'
 import { format, subDays } from 'date-fns'
 import { CartesianGrid, Line, LineChart, ResponsiveContainer, Tooltip, XAxis, YAxis } from 'recharts'
+import { LineChart as ChartIcon, Download } from 'lucide-react'
 
 const fields = ['temperatura', 'umidade', 'co2', 'co', 'tvocs', 'luminosidade']
 
@@ -65,6 +66,14 @@ export default function HistoricalChart({ data = [] }) {
 
   return (
     <div className="card chart-shell">
+      <div className="card-header">
+        <h3>
+          <span className="header-icon">
+            <ChartIcon size={16} />
+          </span>
+          Histórico
+        </h3>
+      </div>
       <div className="row-wrap chart-toolbar">
         <label>
           Sensor
@@ -97,42 +106,53 @@ export default function HistoricalChart({ data = [] }) {
             </label>
           </>
         ) : null}
-        <button onClick={downloadCsv}>Exportar CSV</button>
+        <button onClick={downloadCsv} className="ghost">
+          <Download size={14} /> CSV
+        </button>
       </div>
       <div className="chart-card">
         <ResponsiveContainer>
           <LineChart data={filtered}>
-            <CartesianGrid strokeDasharray="3 3" stroke="rgba(27, 77, 46, 0.12)" />
+            <defs>
+              <linearGradient id="djamorChartGradient" x1="0" y1="0" x2="1" y2="0">
+                <stop offset="0%" stopColor="#ec4899" />
+                <stop offset="50%" stopColor="#a855f7" />
+                <stop offset="100%" stopColor="#06b6d4" />
+              </linearGradient>
+            </defs>
+            <CartesianGrid strokeDasharray="3 3" stroke="rgba(255, 124, 178, 0.1)" />
             <XAxis
               dataKey="timestamp"
               tickFormatter={(v) => (v ? format(new Date(v), 'dd/MM HH:mm') : '--')}
-              tick={{ fill: '#355746', fontSize: 12 }}
-              axisLine={{ stroke: 'rgba(27, 77, 46, 0.25)' }}
-              tickLine={{ stroke: 'rgba(27, 77, 46, 0.2)' }}
+              tick={{ fill: '#a78aa0', fontSize: 12 }}
+              axisLine={{ stroke: 'rgba(255, 124, 178, 0.2)' }}
+              tickLine={{ stroke: 'rgba(255, 124, 178, 0.2)' }}
               minTickGap={28}
             />
             <YAxis
-              tick={{ fill: '#355746', fontSize: 12 }}
-              axisLine={{ stroke: 'rgba(27, 77, 46, 0.25)' }}
-              tickLine={{ stroke: 'rgba(27, 77, 46, 0.2)' }}
+              tick={{ fill: '#a78aa0', fontSize: 12 }}
+              axisLine={{ stroke: 'rgba(255, 124, 178, 0.2)' }}
+              tickLine={{ stroke: 'rgba(255, 124, 178, 0.2)' }}
             />
             <Tooltip
               labelFormatter={(value) => (value ? format(new Date(value), 'dd/MM/yyyy HH:mm:ss') : '--')}
               formatter={(value) => [value ?? '--', field]}
               contentStyle={{
                 borderRadius: 14,
-                border: '1px solid rgba(45, 106, 79, 0.25)',
-                background: 'rgba(255, 255, 255, 0.95)',
-                boxShadow: '0 10px 24px rgba(0, 0, 0, 0.1)',
+                border: '1px solid rgba(255, 124, 178, 0.35)',
+                background: 'rgba(20, 8, 24, 0.95)',
+                color: '#fbeaf3',
+                boxShadow: '0 10px 24px rgba(0, 0, 0, 0.4)',
               }}
+              labelStyle={{ color: '#ff85b3', fontWeight: 600 }}
             />
             <Line
               type="monotone"
               dataKey={field}
-              stroke="#2d6a4f"
+              stroke="url(#djamorChartGradient)"
               strokeWidth={3}
               dot={false}
-              activeDot={{ r: 5, fill: '#d4af37', stroke: '#1b4d2e', strokeWidth: 2 }}
+              activeDot={{ r: 6, fill: '#ec4899', stroke: '#fbeaf3', strokeWidth: 2 }}
             />
           </LineChart>
         </ResponsiveContainer>

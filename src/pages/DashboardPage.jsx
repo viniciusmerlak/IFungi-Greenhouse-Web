@@ -1,16 +1,12 @@
 /**
- * DashboardPage.jsx
- * Página principal do dashboard — adaptada para a estrutura real do banco.
- *
- * Mudanças em relação à versão anterior:
- *  - SensorCards recebe sensor_status e setpoints (para mostrar alertas por setpoint)
- *  - StatusBar exibe status.online, lastHeartbeat, ip e saúde dos sensores
- *  - LogsPanel exibe logs.recent e logs.last_errors
- *  - GreenhouseSelector agora recebe a lista direto (normalizada em rtdb.js)
- *  - Todos os componentes usam os campos reais do banco
+ * DashboardPage.jsx — Djamor redesign.
+ * Header com logo de cogumelo, animações de entrada por seção,
+ * tipografia e ícones consistentes (lucide-react).
  */
 import { useEffect, useState } from 'react'
 import toast from 'react-hot-toast'
+import { motion } from 'framer-motion'
+import { Activity, Gauge, Sliders, History, LogOut, AlertTriangle } from 'lucide-react'
 import ActuatorPanel from '../components/Dashboard/ActuatorPanel'
 import GreenhouseSelector from '../components/Dashboard/GreenhouseSelector'
 import HistoricalChart from '../components/Dashboard/HistoricalChart'
@@ -21,14 +17,24 @@ import LEDScheduleEditor from '../components/Config/LEDScheduleEditor'
 import OperationModeEditor from '../components/Config/OperationModeEditor'
 import SetpointsEditor from '../components/Config/SetpointsEditor'
 import OTAModal from '../components/OTA/OTAModal'
+import MushroomLogo from '../components/Brand/MushroomLogo'
 import useGreenhouseData from '../hooks/useGreenhouseData'
 import { logout, useAuthState } from '../services/auth'
 import { subscribeAllowedGreenhouses } from '../services/rtdb'
 
+const sectionVariants = {
+  hidden: { opacity: 0, y: 18 },
+  visible: (i = 0) => ({
+    opacity: 1,
+    y: 0,
+    transition: { delay: 0.1 + i * 0.08, duration: 0.45, ease: [0.2, 0.9, 0.4, 1.05] },
+  }),
+}
+
 export default function DashboardPage() {
   const { user } = useAuthState()
   const [greenhouses, setGreenhouses] = useState([])
-  const [selectedId, setSelectedId]   = useState('')
+  const [selectedId, setSelectedId] = useState('')
 
   const { data, historicalArray, loading, connected, error } = useGreenhouseData(selectedId)
 
@@ -47,32 +53,70 @@ export default function DashboardPage() {
 
   return (
     <main className="page">
-      <header className="row-between">
-        <h1>IFungi Greenhouse</h1>
-        <button onClick={logout}>Sair</button>
-      </header>
+      <motion.header
+        className="app-header"
+        initial={{ opacity: 0, y: -12 }}
+        animate={{ opacity: 1, y: 0 }}
+        transition={{ duration: 0.45, ease: [0.2, 0.9, 0.4, 1.05] }}
+      >
+        <div className="brand">
+          <MushroomLogo size={42} />
+          <div className="brand-text">
+            <span className="brand-name">IFungi</span>
+            <span className="brand-tagline">Greenhouse · Djamor</span>
+          </div>
+        </div>
+        <div className="header-user">
+          {user?.email && <span className="user-email">{user.email}</span>}
+          <button onClick={logout} className="ghost">
+            <LogOut size={16} /> Sair
+          </button>
+        </div>
+      </motion.header>
 
       {!connected && (
-        <div className="card warning-card">⚠ Sem conexão com o Firebase RTDB.</div>
+        <motion.div
+          className="card warning-card"
+          initial={{ opacity: 0 }}
+          animate={{ opacity: 1 }}
+          style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}
+        >
+          <AlertTriangle size={18} /> Sem conexão com o Firebase RTDB.
+        </motion.div>
       )}
 
-      <GreenhouseSelector
-        greenhouses={greenhouses}
-        selectedId={selectedId}
-        onSelect={setSelectedId}
-      />
+      <motion.div custom={0} variants={sectionVariants} initial="hidden" animate="visible">
+        <GreenhouseSelector
+          greenhouses={greenhouses}
+          selectedId={selectedId}
+          onSelect={setSelectedId}
+        />
+      </motion.div>
 
-      {loading && <p style={{ textAlign: 'center', padding: '1rem' }}>Carregando dados da estufa...</p>}
+      {loading && (
+        <div className="card full-loader" style={{ alignItems: 'center', justifyContent: 'center' }}>
+          <div className="loader-spinner" />
+          Carregando dados da estufa...
+        </div>
+      )}
 
       {selectedId ? (
         <div className="dashboard-layout">
+          <motion.div custom={1} variants={sectionVariants} initial="hidden" animate="visible">
+            <StatusBar status={data.status} sensor_status={data.sensor_status} />
+          </motion.div>
 
-          {/* Status geral */}
-          <StatusBar status={data.status} sensor_status={data.sensor_status} />
-
-          {/* Monitoramento */}
-          <section className="dashboard-section">
-            <h2 className="section-title">Monitoramento</h2>
+          <motion.section
+            className="dashboard-section"
+            custom={2}
+            variants={sectionVariants}
+            initial="hidden"
+            animate="visible"
+          >
+            <h2 className="section-title">
+              <Gauge size={14} style={{ verticalAlign: 'text-bottom', marginRight: 6 }} />
+              Monitoramento
+            </h2>
             <SensorCards
               sensores={data.sensores}
               niveis={data.niveis}
@@ -80,11 +124,19 @@ export default function DashboardPage() {
               setpoints={data.setpoints}
               atuadores={data.atuadores}
             />
-          </section>
+          </motion.section>
 
-          {/* Controle operacional */}
-          <section className="dashboard-section">
-            <h2 className="section-title">Controle operacional</h2>
+          <motion.section
+            className="dashboard-section"
+            custom={3}
+            variants={sectionVariants}
+            initial="hidden"
+            animate="visible"
+          >
+            <h2 className="section-title">
+              <Sliders size={14} style={{ verticalAlign: 'text-bottom', marginRight: 6 }} />
+              Controle operacional
+            </h2>
             <div className="config-grid">
               <ActuatorPanel
                 greenhouseId={selectedId}
@@ -108,20 +160,29 @@ export default function DashboardPage() {
                 setpoints={data.setpoints}
               />
             </div>
-          </section>
+          </motion.section>
 
-          {/* Histórico, Logs e OTA */}
-          <section className="dashboard-section">
-            <h2 className="section-title">Histórico e diagnóstico</h2>
+          <motion.section
+            className="dashboard-section"
+            custom={4}
+            variants={sectionVariants}
+            initial="hidden"
+            animate="visible"
+          >
+            <h2 className="section-title">
+              <History size={14} style={{ verticalAlign: 'text-bottom', marginRight: 6 }} />
+              Histórico e diagnóstico
+            </h2>
             <HistoricalChart data={historicalArray} />
             <LogsPanel logs={data.logs} />
             <OTAModal greenhouseId={selectedId} ota={data.ota} />
-          </section>
-
+          </motion.section>
         </div>
       ) : (
         !loading && (
-          <div className="card">Nenhuma estufa permitida para este usuário.</div>
+          <div className="card" style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
+            <Activity size={16} /> Nenhuma estufa permitida para este usuário.
+          </div>
         )
       )}
     </main>

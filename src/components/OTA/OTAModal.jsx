@@ -1,28 +1,22 @@
 /**
- * OTAModal.jsx
- * Painel unificado de atualizacao OTA.
- *
- * Pipeline (100% gratuita, sem Firebase Storage):
- *   1. Navegador le o .bin, converte pra base64 e cria um Git blob em
- *      `viniciusmerlak/IFungi-Greenhouse-Web` via POST /git/blobs
- *      (api.github.com suporta CORS). O blob e dangling -- nenhum commit o
- *      referencia, entao o GC do GitHub remove no proximo ciclo.
- *   2. Navegador dispara `workflow_dispatch` em `publish-ota.yml` passando
- *      { version, staging_sha, target_repo, run_seed }.
- *   3. Workflow (server-side, sem restricao de CORS) baixa o blob via
- *      /git/blobs/{sha}, valida tamanho/magic, cria a release em
- *      `target_repo` e sobe o asset com nome `firmware.bin`.
- *   4. Navegador faz polling do run ate completar, le a release via
- *      /releases/tags/{tag} e grava
- *      { available, version, url, notes, lastPublishedAt } em
- *      /greenhouses/{greenhouseId}/ota.
- *
- * O upload direto pra `uploads.github.com` foi removido porque o GitHub nao
- * envia headers CORS nesse endpoint -- por isso a passagem pelo workflow.
+ * OTAModal.jsx — Djamor redesign.
+ * Preserva 100% da lógica da pipeline (Git Blob → workflow_dispatch → release → RTDB).
  */
 import { useCallback, useState } from 'react'
 import { useDropzone } from 'react-dropzone'
 import toast from 'react-hot-toast'
+import { motion, AnimatePresence } from 'framer-motion'
+import {
+  Rocket,
+  Upload,
+  X,
+  CheckCircle2,
+  ExternalLink,
+  GitBranch,
+  HardDriveUpload,
+  Loader2,
+  Info,
+} from 'lucide-react'
 import {
   createBlob,
   findRecentWorkflowRun,
@@ -46,10 +40,6 @@ function randomSeed() {
   return `ifungi-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`
 }
 
-/**
- * Le o File como base64 (sem o prefixo `data:...;base64,`).
- * O resultado eh enviado pra POST /git/blobs com encoding=base64.
- */
 function fileToBase64(file) {
   return new Promise((resolve, reject) => {
     const reader = new FileReader()
@@ -63,95 +53,20 @@ function fileToBase64(file) {
   })
 }
 
-const S = {
-  overlay: {
-    position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.55)',
-    display: 'flex', alignItems: 'center', justifyContent: 'center',
-    zIndex: 1000, padding: '1rem',
-  },
-  modal: {
-    background: 'var(--bg, #1a1a2e)', border: '1px solid var(--border, #2a2a4a)',
-    borderRadius: '12px', width: '100%', maxWidth: '540px',
-    maxHeight: '90vh', overflowY: 'auto',
-    boxShadow: '0 24px 64px rgba(0,0,0,0.6)',
-    display: 'flex', flexDirection: 'column', gap: 0,
-  },
-  header: {
-    padding: '1.25rem 1.5rem 1rem',
-    borderBottom: '1px solid var(--border, #2a2a4a)',
-    display: 'flex', alignItems: 'center', justifyContent: 'space-between',
-  },
-  title: { margin: 0, fontSize: '1rem', fontWeight: 600, letterSpacing: '0.01em' },
-  badge: {
-    fontSize: '0.7rem', padding: '2px 8px', borderRadius: '999px',
-    background: 'var(--accent-dim, #2d2d5a)', color: 'var(--accent, #7c7cff)',
-    fontFamily: 'monospace', letterSpacing: '0.05em',
-  },
-  closeBtn: {
-    background: 'none', border: 'none', cursor: 'pointer',
-    fontSize: '1.25rem', lineHeight: 1, opacity: 0.6, padding: '4px',
-    color: 'inherit',
-  },
-  body: { padding: '1.25rem 1.5rem', display: 'flex', flexDirection: 'column', gap: '1rem' },
-  field: { display: 'flex', flexDirection: 'column', gap: '0.35rem' },
-  label: { fontSize: '0.75rem', fontWeight: 500, color: 'var(--text-muted, #888)', letterSpacing: '0.06em', textTransform: 'uppercase' },
-  input: {
-    padding: '0.6rem 0.75rem', borderRadius: '7px', fontSize: '0.875rem',
-    border: '1px solid var(--border, #2a2a4a)', background: 'var(--bg-raised, #12122a)',
-    color: 'inherit', outline: 'none', fontFamily: 'inherit', width: '100%',
-    boxSizing: 'border-box',
-  },
-  hint: { fontSize: '0.7rem', color: 'var(--text-muted, #666)', lineHeight: 1.5 },
-  infoBox: {
-    padding: '0.75rem 1rem', borderRadius: '8px',
-    background: 'var(--bg-raised, #12122a)', border: '1px solid var(--border, #2a2a4a)',
-    fontSize: '0.8rem', lineHeight: 1.6, color: 'var(--text-muted, #aaa)',
-  },
-  codeBlock: {
-    background: 'var(--bg, #0d0d1e)', borderRadius: '6px',
-    padding: '0.5rem 0.75rem', fontFamily: 'monospace', fontSize: '0.75rem',
-    color: 'var(--accent, #7c7cff)', overflowX: 'auto', whiteSpace: 'nowrap',
-    border: '1px solid var(--border, #2a2a4a)',
-  },
-  dropzone: (active) => ({
-    border: `2px dashed ${active ? 'var(--accent, #7c7cff)' : 'var(--border, #2a2a4a)'}`,
-    borderRadius: '8px', padding: '1.5rem', textAlign: 'center', cursor: 'pointer',
-    transition: 'all 0.15s', fontSize: '0.85rem', color: 'var(--text-muted, #888)',
-    background: active ? 'var(--accent-dim, #1a1a40)' : 'transparent',
-  }),
-  progress: {
-    height: '4px', borderRadius: '2px', background: 'var(--border, #2a2a4a)',
-    overflow: 'hidden', marginTop: '0.25rem',
-  },
-  progressBar: (pct) => ({
-    height: '100%', width: `${pct}%`, transition: 'width 0.2s',
-    background: 'linear-gradient(90deg, #7c7cff, #a78bfa)',
-  }),
-  footer: {
-    padding: '1rem 1.5rem', borderTop: '1px solid var(--border, #2a2a4a)',
-    display: 'flex', gap: '0.75rem', justifyContent: 'flex-end',
-  },
-  btnPrimary: {
-    padding: '0.6rem 1.25rem', borderRadius: '7px', border: 'none',
-    background: 'var(--accent, #7c7cff)', color: '#fff', cursor: 'pointer',
-    fontSize: '0.85rem', fontWeight: 600, transition: 'opacity 0.15s',
-  },
-  btnSecondary: {
-    padding: '0.6rem 1.25rem', borderRadius: '7px',
-    border: '1px solid var(--border, #2a2a4a)', background: 'none',
-    color: 'inherit', cursor: 'pointer', fontSize: '0.85rem',
-  },
-  statusRow: {
-    display: 'flex', alignItems: 'center', gap: '0.5rem',
-    fontSize: '0.8rem', color: 'var(--text-muted, #888)',
-  },
-  dot: (color) => ({
-    width: '7px', height: '7px', borderRadius: '50%',
-    background: color, flexShrink: 0,
-  }),
+const overlayStyle = {
+  position: 'fixed',
+  inset: 0,
+  background: 'rgba(8, 4, 14, 0.78)',
+  backdropFilter: 'blur(8px)',
+  WebkitBackdropFilter: 'blur(8px)',
+  display: 'flex',
+  alignItems: 'center',
+  justifyContent: 'center',
+  zIndex: 1000,
+  padding: '1rem',
 }
 
-function PublishForm({ greenhouseId, ota }) {
+function PublishForm({ greenhouseId, ota, onClose }) {
   const [version, setVersion] = useState('')
   const [token, setToken] = useState(localStorage.getItem('ifungi_github_token') || '')
   const [repo, setRepo] = useState(localStorage.getItem('ifungi_repo') || '')
@@ -183,7 +98,7 @@ function PublishForm({ greenhouseId, ota }) {
       return
     }
     if (!/^\d+\.\d+\.\d+$/.test(version)) {
-      toast.error('Versao invalida. Use X.Y.Z')
+      toast.error('Versão inválida. Use X.Y.Z')
       return
     }
 
@@ -200,7 +115,7 @@ function PublishForm({ greenhouseId, ota }) {
     try {
       const existing = await getReleaseByTag(token, repo, tag)
       if (existing) {
-        toast.error(`Release ${tag} ja existe no GitHub. Use outra versao.`)
+        toast.error(`Release ${tag} já existe no GitHub. Use outra versão.`)
         return
       }
 
@@ -223,7 +138,7 @@ function PublishForm({ greenhouseId, ota }) {
       })
       setProgress(45)
 
-      setStage('Aguardando workflow comecar')
+      setStage('Aguardando workflow começar')
       let run = null
       const sinceIso = new Date(dispatchedAt.getTime() - 60_000).toISOString()
       const findDeadline = Date.now() + 60_000
@@ -232,7 +147,7 @@ function PublishForm({ greenhouseId, ota }) {
         run = await findRecentWorkflowRun(token, SOURCE_REPO, WORKFLOW_FILE, sinceIso, seed)
         if (run) break
       }
-      if (!run) throw new Error('Nao consegui localizar o run do workflow no GitHub Actions')
+      if (!run) throw new Error('Não consegui localizar o run do workflow no GitHub Actions')
       setProgress(55)
 
       setStage('GitHub Actions executando')
@@ -241,7 +156,9 @@ function PublishForm({ greenhouseId, ota }) {
         const status = await getWorkflowRun(token, SOURCE_REPO, run.id)
         if (status.status === 'completed') {
           if (status.conclusion !== 'success') {
-            throw new Error(`Workflow terminou com status "${status.conclusion}". Veja os logs em ${status.html_url}`)
+            throw new Error(
+              `Workflow terminou com status "${status.conclusion}". Veja os logs em ${status.html_url}`,
+            )
           }
           run = status
           break
@@ -291,115 +208,182 @@ function PublishForm({ greenhouseId, ota }) {
 
   if (publishedUrl) {
     return (
-      <div style={S.body}>
-        <div style={{ ...S.infoBox, borderColor: '#22c55e33', background: '#052e1633' }}>
-          <div style={{ fontWeight: 600, marginBottom: '0.5rem', color: '#4ade80' }}>
-            OTA publicada com sucesso
+      <div className="ota-card">
+        <div
+          className="card"
+          style={{
+            borderColor: 'rgba(74, 222, 128, 0.45)',
+            background:
+              'linear-gradient(160deg, rgba(74, 222, 128, 0.12), rgba(6, 182, 212, 0.06))',
+          }}
+        >
+          <div
+            style={{
+              display: 'flex',
+              alignItems: 'center',
+              gap: '0.5rem',
+              color: 'var(--ok)',
+              fontWeight: 600,
+              marginBottom: '0.5rem',
+            }}
+          >
+            <CheckCircle2 size={18} /> OTA publicada com sucesso
           </div>
-          <div style={{ fontSize: '0.75rem', marginBottom: '0.5rem' }}>
-            URL gravada em <code>greenhouses/{greenhouseId}/ota.url</code>:
-          </div>
-          <div style={S.codeBlock}>{publishedUrl}</div>
-          <div style={{ fontSize: '0.7rem', marginTop: '0.5rem', color: 'var(--text-muted, #888)' }}>
-            O ESP32 ira detectar a atualizacao no proximo ciclo de verificacao.
-          </div>
+          <p className="hint-text" style={{ marginBottom: '0.5rem' }}>
+            URL gravada em <code className="code-inline">greenhouses/{greenhouseId}/ota.url</code>:
+          </p>
+          <a
+            href={publishedUrl}
+            target="_blank"
+            rel="noreferrer"
+            className="code-inline"
+            style={{ display: 'inline-flex', alignItems: 'center', gap: '0.4rem', wordBreak: 'break-all' }}
+          >
+            <ExternalLink size={12} />
+            {publishedUrl}
+          </a>
+          <p className="hint-text" style={{ marginTop: '0.5rem' }}>
+            O ESP32 irá detectar a atualização no próximo ciclo de verificação.
+          </p>
         </div>
-        <button style={S.btnSecondary} onClick={reset}>
-          Publicar outra versao
-        </button>
+        <div style={{ display: 'flex', gap: '0.5rem' }}>
+          <button onClick={reset}>Publicar outra versão</button>
+          <button onClick={onClose} className="ghost">
+            Fechar
+          </button>
+        </div>
       </div>
     )
   }
 
   return (
-    <div style={S.body}>
-      <div style={S.infoBox}>
-        <strong>Pipeline OTA</strong>
-        <br />
-        O navegador sobe o <code>.bin</code> como Git blob via API, dispara o workflow{' '}
-        <code>publish-ota.yml</code> no GitHub Actions (que cria a release com asset{' '}
-        <code>firmware.bin</code>), e grava a URL final em{' '}
-        <code>greenhouses/{'{id}'}/ota</code>.
+    <div className="ota-card">
+      <div
+        className="card"
+        style={{
+          background: 'linear-gradient(160deg, rgba(168, 85, 247, 0.08), rgba(6, 182, 212, 0.05))',
+          padding: '0.85rem 1rem',
+          fontSize: '0.82rem',
+        }}
+      >
+        <div style={{ display: 'flex', gap: '0.5rem', color: 'var(--text-secondary)' }}>
+          <Info size={16} style={{ flexShrink: 0, color: 'var(--cyan-400)' }} />
+          <span>
+            O navegador sobe o <code className="code-inline">.bin</code> como Git blob, dispara{' '}
+            <code className="code-inline">publish-ota.yml</code>, e a release fica em{' '}
+            <code className="code-inline">/firmware.bin</code>.
+          </span>
+        </div>
       </div>
 
-      <div style={S.field}>
-        <label style={S.label}>PAT GitHub (contents:write + actions:write em IFungi-Greenhouse-Web)</label>
+      <label>
+        <span style={{ display: 'inline-flex', alignItems: 'center', gap: '0.4rem' }}>
+          <GitBranch size={14} /> PAT GitHub (contents:write + actions:write)
+        </span>
         <input
-          style={S.input}
           type="password"
           placeholder="ghp_..."
           value={token}
           onChange={(e) => setToken(e.target.value)}
         />
-        <span style={S.hint}>Salvo apenas no navegador (localStorage).</span>
-      </div>
+        <span className="hint-text">Salvo apenas no navegador (localStorage).</span>
+      </label>
 
-      <div style={S.field}>
-        <label style={S.label}>Repositorio de releases</label>
+      <label>
+        Repositório de releases
         <input
-          style={S.input}
           placeholder="usuario/IFUNGI-OTA-UPDATES"
           value={repo}
           onChange={(e) => setRepo(e.target.value)}
         />
-      </div>
+      </label>
 
-      <div style={S.field}>
-        <label style={S.label}>Versao do firmware</label>
+      <label>
+        Versão do firmware
         <input
-          style={S.input}
           placeholder="1.2.5"
           value={version}
           onChange={(e) => setVersion(e.target.value)}
         />
-        <span style={S.hint}>Formato semver X.Y.Z. A tag publicada sera <code>v{version || 'X.Y.Z'}</code>.</span>
-      </div>
+        <span className="hint-text">
+          Formato semver X.Y.Z. A tag publicada será{' '}
+          <code className="code-inline">v{version || 'X.Y.Z'}</code>.
+        </span>
+      </label>
 
-      <div style={S.field}>
-        <label style={S.label}>Arquivo firmware (.bin)</label>
-        <div style={S.dropzone(isDragActive)} {...getRootProps()}>
+      <label>
+        Arquivo firmware (.bin)
+        <div className={`dropzone ${isDragActive ? 'active' : ''}`} {...getRootProps()}>
           <input {...getInputProps()} />
-          {isDragActive
-            ? 'Solte o arquivo aqui'
-            : file
-              ? `${file.name} (${(file.size / 1024).toFixed(1)} KB)`
-              : 'Arraste o .bin ou clique para selecionar'}
+          <Upload size={20} style={{ marginBottom: 4 }} />
+          <strong>
+            {isDragActive
+              ? 'Solte o arquivo aqui'
+              : file
+                ? file.name
+                : 'Arraste o .bin ou clique para selecionar'}
+          </strong>
+          {file && (
+            <div style={{ fontSize: '0.78rem' }}>
+              {(file.size / 1024).toFixed(1)} KB
+            </div>
+          )}
         </div>
-      </div>
+      </label>
 
-      <div style={S.field}>
-        <label style={S.label}>Estufa alvo</label>
-        <div style={S.codeBlock}>{greenhouseId}</div>
-      </div>
+      <label>
+        Estufa alvo
+        <code className="code-inline" style={{ padding: '0.5rem 0.75rem', display: 'block' }}>
+          {greenhouseId}
+        </code>
+      </label>
 
       {loading && (
         <div>
-          <div style={{ ...S.statusRow, marginBottom: '0.4rem' }}>
-            <div style={S.dot('#a78bfa')} />
-            <span>{stage || 'Enviando'}... {progress}%</span>
+          <div
+            style={{
+              display: 'flex',
+              alignItems: 'center',
+              gap: '0.5rem',
+              fontSize: '0.82rem',
+              color: 'var(--pink-300)',
+              marginBottom: '0.4rem',
+            }}
+          >
+            <Loader2 size={14} style={{ animation: 'spin 1s linear infinite' }} />
+            <span>
+              {stage || 'Enviando'}... {progress}%
+            </span>
           </div>
-          <div style={S.progress}>
-            <div style={S.progressBar(progress)} />
+          <div className="progress-bar">
+            <div className="progress-bar-fill" style={{ width: `${progress}%` }} />
           </div>
         </div>
       )}
 
       {ota?.lastInstalledVersion && (
-        <div style={S.statusRow}>
-          <div style={S.dot('#22c55e')} />
-          <span>
-            Versao instalada: <strong>{ota.lastInstalledVersion}</strong>
-          </span>
+        <div className="status djamor" style={{ alignSelf: 'flex-start' }}>
+          <CheckCircle2 size={11} /> Instalada: v{ota.lastInstalledVersion}
         </div>
       )}
 
-      <button
-        style={{ ...S.btnPrimary, opacity: loading ? 0.6 : 1 }}
-        onClick={publish}
-        disabled={loading}
-      >
-        {loading ? `Publicando... ${progress}%` : 'Publicar OTA'}
-      </button>
+      <div style={{ display: 'flex', gap: '0.5rem' }}>
+        <button onClick={publish} disabled={loading} className="primary" style={{ flex: 1 }}>
+          {loading ? (
+            <>
+              <Loader2 size={14} style={{ animation: 'spin 1s linear infinite' }} />
+              Publicando... {progress}%
+            </>
+          ) : (
+            <>
+              <HardDriveUpload size={14} /> Publicar OTA
+            </>
+          )}
+        </button>
+        <button onClick={onClose} className="ghost" disabled={loading}>
+          Fechar
+        </button>
+      </div>
     </div>
   )
 }
@@ -411,54 +395,85 @@ export default function OTAModal({ greenhouseId, ota = {} }) {
 
   return (
     <>
-      <div
-        className="card"
-        style={{
-          display: 'flex',
-          alignItems: 'center',
-          justifyContent: 'space-between',
-          flexWrap: 'wrap',
-          gap: '0.75rem',
-        }}
-      >
-        <div>
-          <div style={{ fontWeight: 600, marginBottom: '0.2rem' }}>Atualizacao de Firmware (OTA)</div>
-          <div style={{ fontSize: '0.8rem', color: 'var(--text-muted, #888)' }}>
-            {isAvailable ? (
-              <span style={{ color: '#f59e0b' }}>Atualizacao pendente: v{ota.version}</span>
-            ) : ota.lastInstalledVersion ? (
-              `Instalada: v${ota.lastInstalledVersion}`
-            ) : (
-              'Nenhuma atualizacao pendente'
-            )}
+      <div className="card" style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', flexWrap: 'wrap', gap: '0.75rem' }}>
+        <div style={{ display: 'flex', alignItems: 'center', gap: '0.85rem' }}>
+          <span className="header-icon">
+            <Rocket size={16} />
+          </span>
+          <div>
+            <div style={{ fontWeight: 600, fontFamily: "'Space Grotesk', sans-serif" }}>
+              Atualização de Firmware (OTA)
+            </div>
+            <div className="hint-text" style={{ marginTop: 2 }}>
+              {isAvailable ? (
+                <span style={{ color: 'var(--gold-400)' }}>
+                  Atualização pendente: v{ota.version}
+                </span>
+              ) : ota.lastInstalledVersion ? (
+                `Instalada: v${ota.lastInstalledVersion}`
+              ) : (
+                'Nenhuma atualização pendente'
+              )}
+            </div>
           </div>
         </div>
-        <button onClick={() => setOpen(true)}>Publicar OTA</button>
+        <button onClick={() => setOpen(true)} className="primary">
+          <Rocket size={14} /> Publicar OTA
+        </button>
       </div>
 
-      {open && (
-        <div style={S.overlay} onClick={(e) => e.target === e.currentTarget && setOpen(false)}>
-          <div style={S.modal}>
-            <div style={S.header}>
-              <div style={{ display: 'flex', alignItems: 'center', gap: '0.75rem' }}>
-                <span style={S.title}>Publicar Firmware OTA</span>
-                <span style={S.badge}>{greenhouseId}</span>
+      <AnimatePresence>
+        {open && (
+          <motion.div
+            style={overlayStyle}
+            onClick={(e) => e.target === e.currentTarget && setOpen(false)}
+            initial={{ opacity: 0 }}
+            animate={{ opacity: 1 }}
+            exit={{ opacity: 0 }}
+            transition={{ duration: 0.18 }}
+          >
+            <motion.div
+              className="card"
+              style={{
+                width: '100%',
+                maxWidth: 580,
+                maxHeight: '90vh',
+                overflowY: 'auto',
+                padding: '1.25rem 1.4rem',
+              }}
+              initial={{ opacity: 0, y: 20, scale: 0.96 }}
+              animate={{ opacity: 1, y: 0, scale: 1 }}
+              exit={{ opacity: 0, y: 12, scale: 0.97 }}
+              transition={{ duration: 0.25, ease: [0.2, 0.9, 0.4, 1.05] }}
+            >
+              <div className="card-header">
+                <h3>
+                  <span className="header-icon">
+                    <Rocket size={16} />
+                  </span>
+                  Publicar Firmware OTA
+                </h3>
+                <div style={{ display: 'flex', gap: '0.5rem', alignItems: 'center' }}>
+                  <span className="code-inline">{greenhouseId}</span>
+                  <button
+                    className="icon-button ghost"
+                    onClick={() => setOpen(false)}
+                    aria-label="Fechar"
+                  >
+                    <X size={16} />
+                  </button>
+                </div>
               </div>
-              <button style={S.closeBtn} onClick={() => setOpen(false)}>
-                ×
-              </button>
-            </div>
 
-            <PublishForm greenhouseId={greenhouseId} ota={ota} />
-
-            <div style={S.footer}>
-              <button style={S.btnSecondary} onClick={() => setOpen(false)}>
-                Fechar
-              </button>
-            </div>
-          </div>
-        </div>
-      )}
+              <PublishForm
+                greenhouseId={greenhouseId}
+                ota={ota}
+                onClose={() => setOpen(false)}
+              />
+            </motion.div>
+          </motion.div>
+        )}
+      </AnimatePresence>
     </>
   )
 }

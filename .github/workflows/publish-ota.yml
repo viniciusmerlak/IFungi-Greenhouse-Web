@@ -1,172 +1,121 @@
-name: Publish OTA Firmware
+name: Publish OTA Release
 
 on:
   workflow_dispatch:
     inputs:
       version:
-        description: 'Versao do firmware (ex: 1.2.5)'
+        description: 'Versao semver (X.Y.Z)'
         required: true
-      greenhouse_id:
-        description: 'ID da estufa (ex: IFUNGI-EC:62:60:99:E7:0C)'
+      file_url:
+        description: 'URL publica para baixar o .bin (Firebase Storage)'
         required: true
-      firmware_url:
-        description: 'URL direta do .bin para download'
+      target_repo:
+        description: 'Repositorio onde publicar a release (owner/repo)'
         required: true
-      release_repo:
-        description: 'Repositorio de releases (usuario/repo)'
-        required: true
-        default: 'viniciusmerlak/IFUNGI-OTA-UPDATES'
+      run_seed:
+        description: 'Identificador correlacao (preenchido pelo navegador)'
+        required: false
+        default: ''
+
+permissions:
+  contents: read
 
 jobs:
   publish:
     runs-on: ubuntu-latest
-    permissions:
-      contents: write
-
     steps:
-      - name: Validar versao
+      - name: Validar inputs
         run: |
-          if ! echo "${{ inputs.version }}" | grep -qE '^[0-9]+\.[0-9]+\.[0-9]+$'; then
-            echo "Versao invalida: ${{ inputs.version }}. Use formato X.Y.Z"
+          set -euo pipefail
+          if ! [[ "${{ inputs.version }}" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+            echo "::error::Versao invalida (esperado X.Y.Z): ${{ inputs.version }}"
             exit 1
           fi
+          if ! [[ "${{ inputs.target_repo }}" =~ ^[^/]+/[^/]+$ ]]; then
+            echo "::error::target_repo invalido (esperado owner/repo): ${{ inputs.target_repo }}"
+            exit 1
+          fi
+          echo "run_seed=${{ inputs.run_seed }}"
 
-      - name: Download do firmware
+      - name: Baixar firmware da Storage
+        env:
+          FILE_URL: ${{ inputs.file_url }}
         run: |
-          echo "Baixando firmware de: ${{ inputs.firmware_url }}"
-          curl -L -f -o firmware.bin "${{ inputs.firmware_url }}"
-          SIZE=$(stat -c%s firmware.bin)
-          echo "Tamanho: ${SIZE} bytes"
-          if [ "$SIZE" -lt 10000 ]; then
-            echo "Arquivo muito pequeno — possivel erro no download"
+          set -euo pipefail
+          curl -fsSL --retry 3 --max-time 120 -o firmware.bin "$FILE_URL"
+          BYTES=$(stat -c '%s' firmware.bin)
+          echo "Tamanho: ${BYTES} bytes"
+          if [ "$BYTES" -lt 1024 ]; then
+            echo "::error::Arquivo muito pequeno (${BYTES} bytes). Abortando."
             exit 1
           fi
-          # Valida magic byte do ESP32 (0xE9)
-          MAGIC=$(xxd -l 1 firmware.bin | awk '{print $2}')
+          MAGIC=$(head -c1 firmware.bin | xxd -p)
           if [ "$MAGIC" != "e9" ]; then
-            echo "Magic byte invalido: $MAGIC (esperado: e9). Arquivo nao e um firmware ESP32 valido."
+            echo "::warning::Primeiro byte nao e 0xE9 (esp32 magic). Encontrado: 0x${MAGIC}"
+          fi
+
+      - name: Verificar tag livre
+        env:
+          GH_TOKEN: ${{ secrets.OTA_GITHUB_TOKEN }}
+          TARGET_REPO: ${{ inputs.target_repo }}
+          VERSION: ${{ inputs.version }}
+        run: |
+          set -euo pipefail
+          STATUS=$(curl -s -o /tmp/get.json -w "%{http_code}" \
+            -H "Authorization: token ${GH_TOKEN}" \
+            -H "Accept: application/vnd.github+json" \
+            "https://api.github.com/repos/${TARGET_REPO}/releases/tags/v${VERSION}")
+          if [ "$STATUS" = "200" ]; then
+            echo "::error::Release v${VERSION} ja existe em ${TARGET_REPO}. Use outra versao."
             exit 1
           fi
-          echo "Firmware valido (magic byte OK)"
+          if [ "$STATUS" != "404" ]; then
+            echo "::error::GitHub respondeu ${STATUS} ao consultar a tag. Conteudo:"
+            cat /tmp/get.json
+            exit 1
+          fi
+          echo "Tag livre."
 
-      - name: Renomear para firmware.bin com versao
+      - name: Criar release
+        id: create
+        env:
+          GH_TOKEN: ${{ secrets.OTA_GITHUB_TOKEN }}
+          TARGET_REPO: ${{ inputs.target_repo }}
+          VERSION: ${{ inputs.version }}
+          RUN_SEED: ${{ inputs.run_seed }}
         run: |
-          cp firmware.bin "firmware-v${{ inputs.version }}.bin"
-
-      - name: Criar release no GitHub
-        id: create_release
-        uses: actions/github-script@v7
-        with:
-          github-token: ${{ secrets.OTA_GITHUB_TOKEN }}
-          script: |
-            const [owner, repo] = '${{ inputs.release_repo }}'.split('/')
-            const tag = 'v${{ inputs.version }}'
-
-            // Verifica se a tag ja existe
-            try {
-              await github.rest.repos.getReleaseByTag({ owner, repo, tag })
-              core.setFailed(`Release ${tag} ja existe. Use outra versao.`)
-              return
-            } catch (e) {
-              if (e.status !== 404) throw e
-            }
-
-            const release = await github.rest.repos.createRelease({
-              owner,
-              repo,
-              tag_name: tag,
-              name: `IFungi Firmware ${tag}`,
-              body: [
-                `## IFungi Greenhouse Firmware ${tag}`,
-                '',
-                `**Estufa:** \`${{ inputs.greenhouse_id }}\``,
-                `**Data:** ${new Date().toISOString()}`,
-                '',
-                '### Instalação',
-                'Esta release foi publicada automaticamente pelo GitHub Actions.',
-                'O ESP32 receberá a atualização via OTA automaticamente.',
-              ].join('\n'),
-              draft: false,
-              prerelease: false,
-            })
-
-            core.setOutput('upload_url', release.data.upload_url)
-            core.setOutput('release_id', release.data.id)
-            console.log(`Release criada: ${release.data.html_url}`)
-
-      - name: Upload do firmware no release
-        id: upload_asset
-        uses: actions/github-script@v7
-        with:
-          github-token: ${{ secrets.OTA_GITHUB_TOKEN }}
-          script: |
-            const fs = require('fs')
-            const [owner, repo] = '${{ inputs.release_repo }}'.split('/')
-            const releaseId = '${{ steps.create_release.outputs.release_id }}'
-            const fileName = 'firmware-v${{ inputs.version }}.bin'
-            const fileContent = fs.readFileSync(fileName)
-
-            const asset = await github.rest.repos.uploadReleaseAsset({
-              owner,
-              repo,
-              release_id: releaseId,
-              name: 'firmware.bin',
-              data: fileContent,
-              headers: {
-                'content-type': 'application/octet-stream',
-                'content-length': fileContent.length,
-              },
-            })
-
-            const downloadUrl = asset.data.browser_download_url
-            core.setOutput('download_url', downloadUrl)
-            console.log(`Asset publicado: ${downloadUrl}`)
-
-      - name: Atualizar Firebase RTDB via REST
-        run: |
-          DOWNLOAD_URL="${{ steps.upload_asset.outputs.download_url }}"
-          GREENHOUSE_ID="${{ inputs.greenhouse_id }}"
-          VERSION="${{ inputs.version }}"
-          TIMESTAMP=$(date +%s)
-
-          # Monta o payload JSON
-          PAYLOAD=$(cat <<EOF
-          {
-            "available": true,
-            "version": "${VERSION}",
-            "url": "${DOWNLOAD_URL}",
-            "notes": "Publicado via GitHub Actions em $(date -u '+%Y-%m-%dT%H:%M:%SZ')",
-            "lastPublishedAt": ${TIMESTAMP}
-          }
-          EOF
-          )
-
-          # Escreve no Firebase via REST API (PATCH para não sobrescrever lastInstalledVersion)
-          HTTP_STATUS=$(curl -s -o /tmp/firebase_response.json -w "%{http_code}" \
-            -X PATCH \
+          set -euo pipefail
+          BODY="IFungi Firmware v${VERSION} - publicado em $(date -u -Iseconds) (run_seed=${RUN_SEED})"
+          PAYLOAD=$(jq -n --arg tag "v${VERSION}" --arg name "IFungi Firmware v${VERSION}" --arg body "$BODY" \
+            '{tag_name:$tag, name:$name, body:$body, draft:false, prerelease:false}')
+          curl -fsSL -X POST \
+            -H "Authorization: token ${GH_TOKEN}" \
+            -H "Accept: application/vnd.github+json" \
             -H "Content-Type: application/json" \
-            -d "${PAYLOAD}" \
-            "${{ secrets.FIREBASE_DATABASE_URL }}/greenhouses/${GREENHOUSE_ID}/ota.json?auth=${{ secrets.FIREBASE_DB_SECRET }}")
+            -d "$PAYLOAD" \
+            "https://api.github.com/repos/${TARGET_REPO}/releases" \
+            -o /tmp/release.json
+          UPLOAD_URL=$(jq -r '.upload_url' /tmp/release.json | sed 's/{?name,label}//')
+          RELEASE_ID=$(jq -r '.id' /tmp/release.json)
+          echo "upload_url=${UPLOAD_URL}" >> "$GITHUB_OUTPUT"
+          echo "release_id=${RELEASE_ID}" >> "$GITHUB_OUTPUT"
 
-          echo "Firebase HTTP status: ${HTTP_STATUS}"
-          cat /tmp/firebase_response.json
-
-          if [ "${HTTP_STATUS}" != "200" ]; then
-            echo "Falha ao escrever no Firebase (status ${HTTP_STATUS})"
+      - name: Subir firmware.bin como asset
+        env:
+          GH_TOKEN: ${{ secrets.OTA_GITHUB_TOKEN }}
+          UPLOAD_URL: ${{ steps.create.outputs.upload_url }}
+        run: |
+          set -euo pipefail
+          curl -fsSL -X POST \
+            -H "Authorization: token ${GH_TOKEN}" \
+            -H "Accept: application/vnd.github+json" \
+            -H "Content-Type: application/octet-stream" \
+            --data-binary @firmware.bin \
+            "${UPLOAD_URL}?name=firmware.bin" \
+            -o /tmp/asset.json
+          DOWNLOAD_URL=$(jq -r '.browser_download_url' /tmp/asset.json)
+          if ! [[ "$DOWNLOAD_URL" == *"/firmware.bin" ]]; then
+            echo "::error::URL final nao termina em /firmware.bin: $DOWNLOAD_URL"
             exit 1
           fi
-
-          echo "OTA registrado no Firebase com sucesso"
-
-      - name: Resumo da publicacao
-        run: |
-          echo "## ✅ OTA Publicado com Sucesso" >> $GITHUB_STEP_SUMMARY
-          echo "" >> $GITHUB_STEP_SUMMARY
-          echo "| Campo | Valor |" >> $GITHUB_STEP_SUMMARY
-          echo "|-------|-------|" >> $GITHUB_STEP_SUMMARY
-          echo "| **Versão** | v${{ inputs.version }} |" >> $GITHUB_STEP_SUMMARY
-          echo "| **Estufa** | \`${{ inputs.greenhouse_id }}\` |" >> $GITHUB_STEP_SUMMARY
-          echo "| **Download URL** | ${{ steps.upload_asset.outputs.download_url }} |" >> $GITHUB_STEP_SUMMARY
-          echo "| **Repositório** | ${{ inputs.release_repo }} |" >> $GITHUB_STEP_SUMMARY
-          echo "" >> $GITHUB_STEP_SUMMARY
-          echo "O ESP32 vai detectar a atualização no próximo ciclo de verificação (≤60s)." >> $GITHUB_STEP_SUMMARY
+          echo "::notice::Asset publicado: $DOWNLOAD_URL"

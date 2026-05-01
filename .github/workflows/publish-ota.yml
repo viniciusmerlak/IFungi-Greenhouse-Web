@@ -4,104 +4,169 @@ on:
   workflow_dispatch:
     inputs:
       version:
-        description: "OTA version (example: 1.2.3)"
+        description: 'Versao do firmware (ex: 1.2.5)'
         required: true
-        type: string
       greenhouse_id:
-        description: "Greenhouse id in Firebase (example: IFUNGI-EC:62:60:99:E7:0C)"
+        description: 'ID da estufa (ex: IFUNGI-EC:62:60:99:E7:0C)'
         required: true
-        type: string
       firmware_url:
-        description: "Direct URL to firmware .bin to publish"
+        description: 'URL direta do .bin para download'
         required: true
-        type: string
       release_repo:
-        description: "GitHub repository that will host releases (owner/repo)"
+        description: 'Repositorio de releases (usuario/repo)'
         required: true
-        default: "viniciusmerlak/IFUNGI-OTA-UPDATES"
-        type: string
+        default: 'viniciusmerlak/IFUNGI-OTA-UPDATES'
 
 jobs:
   publish:
     runs-on: ubuntu-latest
     permissions:
-      contents: read
+      contents: write
+
     steps:
-      - name: Download firmware binary
+      - name: Validar versao
         run: |
-          set -euo pipefail
-          curl -fL "${{ inputs.firmware_url }}" -o firmware.bin
-          test -s firmware.bin
-
-      - name: Create release and upload binary
-        id: release
-        env:
-          GH_TOKEN: ${{ secrets.OTA_GITHUB_TOKEN }}
-          RELEASE_REPO: ${{ inputs.release_repo }}
-          VERSION: ${{ inputs.version }}
-        run: |
-          set -euo pipefail
-          if [ -z "${GH_TOKEN:-}" ]; then
-            echo "Secret OTA_GITHUB_TOKEN is required."
+          if ! echo "${{ inputs.version }}" | grep -qE '^[0-9]+\.[0-9]+\.[0-9]+$'; then
+            echo "Versao invalida: ${{ inputs.version }}. Use formato X.Y.Z"
             exit 1
           fi
 
-          TAG="v${VERSION}"
-          RELEASE_NAME="OTA ${VERSION}"
-
-          if gh release view "$TAG" --repo "$RELEASE_REPO" >/dev/null 2>&1; then
-            echo "Release $TAG already exists in $RELEASE_REPO."
-            exit 1
-          fi
-
-          gh release create "$TAG" firmware.bin \
-            --repo "$RELEASE_REPO" \
-            --title "$RELEASE_NAME" \
-            --notes "OTA published by workflow on $(date -u +'%Y-%m-%dT%H:%M:%SZ')"
-
-          DOWNLOAD_URL="$(gh api "repos/${RELEASE_REPO}/releases/tags/${TAG}" --jq '.assets[] | select(.name=="firmware.bin") | .browser_download_url')"
-          if [ -z "${DOWNLOAD_URL:-}" ]; then
-            echo "Could not resolve firmware.bin asset URL."
-            exit 1
-          fi
-
-          echo "tag=$TAG" >> "$GITHUB_OUTPUT"
-          echo "download_url=$DOWNLOAD_URL" >> "$GITHUB_OUTPUT"
-
-      - name: Update OTA node in Firebase
-        env:
-          FIREBASE_DATABASE_URL: ${{ secrets.FIREBASE_DATABASE_URL }}
-          FIREBASE_DB_SECRET: ${{ secrets.FIREBASE_DB_SECRET }}
-          GREENHOUSE_ID: ${{ inputs.greenhouse_id }}
-          VERSION: ${{ inputs.version }}
-          DOWNLOAD_URL: ${{ steps.release.outputs.download_url }}
+      - name: Download do firmware
         run: |
-          set -euo pipefail
-          if [ -z "${FIREBASE_DATABASE_URL:-}" ] || [ -z "${FIREBASE_DB_SECRET:-}" ]; then
-            echo "Secrets FIREBASE_DATABASE_URL and FIREBASE_DB_SECRET are required."
+          echo "Baixando firmware de: ${{ inputs.firmware_url }}"
+          curl -L -f -o firmware.bin "${{ inputs.firmware_url }}"
+          SIZE=$(stat -c%s firmware.bin)
+          echo "Tamanho: ${SIZE} bytes"
+          if [ "$SIZE" -lt 10000 ]; then
+            echo "Arquivo muito pequeno — possivel erro no download"
             exit 1
           fi
+          # Valida magic byte do ESP32 (0xE9)
+          MAGIC=$(xxd -l 1 firmware.bin | awk '{print $2}')
+          if [ "$MAGIC" != "e9" ]; then
+            echo "Magic byte invalido: $MAGIC (esperado: e9). Arquivo nao e um firmware ESP32 valido."
+            exit 1
+          fi
+          echo "Firmware valido (magic byte OK)"
 
-          ENCODED_ID="$(printf '%s' "$GREENHOUSE_ID" | jq -sRr @uri)"
-          NOTES="Atualizacao OTA publicada automaticamente em $(date -u +'%Y-%m-%d %H:%M:%SZ')"
-          ENDPOINT="${FIREBASE_DATABASE_URL%/}/greenhouses/${ENCODED_ID}/ota.json?auth=${FIREBASE_DB_SECRET}"
-          PAYLOAD="$(jq -nc \
-            --arg version "$VERSION" \
-            --arg url "$DOWNLOAD_URL" \
-            --arg notes "$NOTES" \
-            '{available: true, version: $version, url: $url, notes: $notes}')"
-
-          curl -f -X PATCH "$ENDPOINT" \
-            -H "Content-Type: application/json" \
-            -d "$PAYLOAD"
-
-      - name: Job summary
+      - name: Renomear para firmware.bin com versao
         run: |
+          cp firmware.bin "firmware-v${{ inputs.version }}.bin"
+
+      - name: Criar release no GitHub
+        id: create_release
+        uses: actions/github-script@v7
+        with:
+          github-token: ${{ secrets.OTA_GITHUB_TOKEN }}
+          script: |
+            const [owner, repo] = '${{ inputs.release_repo }}'.split('/')
+            const tag = 'v${{ inputs.version }}'
+
+            // Verifica se a tag ja existe
+            try {
+              await github.rest.repos.getReleaseByTag({ owner, repo, tag })
+              core.setFailed(`Release ${tag} ja existe. Use outra versao.`)
+              return
+            } catch (e) {
+              if (e.status !== 404) throw e
+            }
+
+            const release = await github.rest.repos.createRelease({
+              owner,
+              repo,
+              tag_name: tag,
+              name: `IFungi Firmware ${tag}`,
+              body: [
+                `## IFungi Greenhouse Firmware ${tag}`,
+                '',
+                `**Estufa:** \`${{ inputs.greenhouse_id }}\``,
+                `**Data:** ${new Date().toISOString()}`,
+                '',
+                '### Instalação',
+                'Esta release foi publicada automaticamente pelo GitHub Actions.',
+                'O ESP32 receberá a atualização via OTA automaticamente.',
+              ].join('\n'),
+              draft: false,
+              prerelease: false,
+            })
+
+            core.setOutput('upload_url', release.data.upload_url)
+            core.setOutput('release_id', release.data.id)
+            console.log(`Release criada: ${release.data.html_url}`)
+
+      - name: Upload do firmware no release
+        id: upload_asset
+        uses: actions/github-script@v7
+        with:
+          github-token: ${{ secrets.OTA_GITHUB_TOKEN }}
+          script: |
+            const fs = require('fs')
+            const [owner, repo] = '${{ inputs.release_repo }}'.split('/')
+            const releaseId = '${{ steps.create_release.outputs.release_id }}'
+            const fileName = 'firmware-v${{ inputs.version }}.bin'
+            const fileContent = fs.readFileSync(fileName)
+
+            const asset = await github.rest.repos.uploadReleaseAsset({
+              owner,
+              repo,
+              release_id: releaseId,
+              name: 'firmware.bin',
+              data: fileContent,
+              headers: {
+                'content-type': 'application/octet-stream',
+                'content-length': fileContent.length,
+              },
+            })
+
+            const downloadUrl = asset.data.browser_download_url
+            core.setOutput('download_url', downloadUrl)
+            console.log(`Asset publicado: ${downloadUrl}`)
+
+      - name: Atualizar Firebase RTDB via REST
+        run: |
+          DOWNLOAD_URL="${{ steps.upload_asset.outputs.download_url }}"
+          GREENHOUSE_ID="${{ inputs.greenhouse_id }}"
+          VERSION="${{ inputs.version }}"
+          TIMESTAMP=$(date +%s)
+
+          # Monta o payload JSON
+          PAYLOAD=$(cat <<EOF
           {
-            echo "## OTA Published"
-            echo ""
-            echo "- Release repo: \`${{ inputs.release_repo }}\`"
-            echo "- Tag: \`${{ steps.release.outputs.tag }}\`"
-            echo "- Firmware URL: ${{ steps.release.outputs.download_url }}"
-            echo "- Greenhouse: \`${{ inputs.greenhouse_id }}\`"
-          } >> "$GITHUB_STEP_SUMMARY"
+            "available": true,
+            "version": "${VERSION}",
+            "url": "${DOWNLOAD_URL}",
+            "notes": "Publicado via GitHub Actions em $(date -u '+%Y-%m-%dT%H:%M:%SZ')",
+            "lastPublishedAt": ${TIMESTAMP}
+          }
+          EOF
+          )
+
+          # Escreve no Firebase via REST API (PATCH para não sobrescrever lastInstalledVersion)
+          HTTP_STATUS=$(curl -s -o /tmp/firebase_response.json -w "%{http_code}" \
+            -X PATCH \
+            -H "Content-Type: application/json" \
+            -d "${PAYLOAD}" \
+            "${{ secrets.FIREBASE_DATABASE_URL }}/greenhouses/${GREENHOUSE_ID}/ota.json?auth=${{ secrets.FIREBASE_DB_SECRET }}")
+
+          echo "Firebase HTTP status: ${HTTP_STATUS}"
+          cat /tmp/firebase_response.json
+
+          if [ "${HTTP_STATUS}" != "200" ]; then
+            echo "Falha ao escrever no Firebase (status ${HTTP_STATUS})"
+            exit 1
+          fi
+
+          echo "OTA registrado no Firebase com sucesso"
+
+      - name: Resumo da publicacao
+        run: |
+          echo "## ✅ OTA Publicado com Sucesso" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "| Campo | Valor |" >> $GITHUB_STEP_SUMMARY
+          echo "|-------|-------|" >> $GITHUB_STEP_SUMMARY
+          echo "| **Versão** | v${{ inputs.version }} |" >> $GITHUB_STEP_SUMMARY
+          echo "| **Estufa** | \`${{ inputs.greenhouse_id }}\` |" >> $GITHUB_STEP_SUMMARY
+          echo "| **Download URL** | ${{ steps.upload_asset.outputs.download_url }} |" >> $GITHUB_STEP_SUMMARY
+          echo "| **Repositório** | ${{ inputs.release_repo }} |" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "O ESP32 vai detectar a atualização no próximo ciclo de verificação (≤60s)." >> $GITHUB_STEP_SUMMARY

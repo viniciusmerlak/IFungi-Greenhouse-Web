@@ -1,69 +1,143 @@
-import { writeGreenhouseNode } from '../../services/rtdb'
-import { normalizeManualActuators } from '../../domain/greenhouseSchema'
+/**
+ * ActuatorPanel.jsx
+ * Exibe o estado dos atuadores e permite controle manual via debug_mode.
+ *
+ * Campos do banco usados:
+ *   atuadores.rele1, rele2, rele3, rele4, leds.ligado, leds.watts, umidificador
+ *   manual_actuators.rele1-4, leds.ligado, leds.intensity, umidificador
+ *   debug_mode (bool)
+ */
+import { useState } from 'react'
+import toast from 'react-hot-toast'
+import { updateGreenhouseNode } from '../../services/rtdb'
 
-function statusDot(active) {
-  return <span className={`dot ${active ? 'ok' : 'bad'}`} />
+const RELAY_LABELS = {
+  rele1: 'Relé 1 (Peltier)',
+  rele2: 'Relé 2 (Polaridade)',
+  rele3: 'Relé 3 (Umidificador)',
+  rele4: 'Relé 4 (Exaustor)',
 }
 
-export default function ActuatorPanel({ greenhouseId, atuadores = {}, debugMode, manualActuators = {} }) {
-  const manual = normalizeManualActuators(manualActuators)
+export default function ActuatorPanel({ greenhouseId, atuadores = {}, debugMode = false, manualActuators = {} }) {
+  const [saving, setSaving] = useState(false)
+  const [local, setLocal] = useState(null)
+
+  // Estado manual local (espelha manual_actuators do banco, editável pelo usuário)
+  const manual = local ?? {
+    rele1:       !!manualActuators.rele1,
+    rele2:       !!manualActuators.rele2,
+    rele3:       !!manualActuators.rele3,
+    rele4:       !!manualActuators.rele4,
+    leds:        { ligado: !!manualActuators?.leds?.ligado, intensity: manualActuators?.leds?.intensity ?? 0 },
+    umidificador:!!manualActuators.umidificador,
+  }
 
   const toggleDebug = async () => {
-    if (!debugMode && !window.confirm('Ativar debug libera controle manual dos atuadores. Continuar?')) return
-    await writeGreenhouseNode(greenhouseId, 'debug_mode', !debugMode)
+    try {
+      await updateGreenhouseNode(greenhouseId, 'debug_mode', !debugMode)
+      toast.success(debugMode ? 'Modo manual desativado' : 'Modo manual ativado')
+    } catch (e) {
+      toast.error('Erro ao alternar modo: ' + e.message)
+    }
   }
 
-  const updateManual = async (payload) => {
-    const next = { ...manual, ...payload, leds: { ...(manual.leds || {}), ...(payload.leds || {}) } }
-    if (!next.rele1 && next.rele2) {
-      next.rele2 = false
+  const saveManual = async () => {
+    setSaving(true)
+    try {
+      await updateGreenhouseNode(greenhouseId, 'manual_actuators', manual)
+      toast.success('Atuadores manuais enviados')
+      setLocal(null)
+    } catch (e) {
+      toast.error('Erro ao salvar: ' + e.message)
+    } finally {
+      setSaving(false)
     }
-    await writeGreenhouseNode(greenhouseId, 'manual_actuators', next)
   }
+
+  const setField = (field, value) =>
+    setLocal((prev) => ({ ...manual, ...(prev ?? {}), [field]: value }))
+
+  const setLedField = (field, value) =>
+    setLocal((prev) => ({ ...manual, ...(prev ?? {}), leds: { ...manual.leds, [field]: value } }))
 
   return (
     <div className="card">
-      <div className="row-between">
+      <div className="row-between" style={{ marginBottom: '0.75rem' }}>
         <h3>Atuadores</h3>
-        <button type="button" onClick={toggleDebug}>
-          Debug: {debugMode ? 'ON' : 'OFF'}
+        <button
+          onClick={toggleDebug}
+          style={{
+            background: debugMode
+              ? 'linear-gradient(95deg, #fef3c7, #fde68a)'
+              : undefined,
+            borderColor: debugMode ? '#d97706' : undefined,
+            color: debugMode ? '#92400e' : undefined,
+          }}
+        >
+          {debugMode ? '🔧 Manual ATIVO' : '🤖 Automático'}
         </button>
       </div>
-      <ul className="compact-list">
-        <li>Rele1 {statusDot(atuadores.rele1)}</li>
-        <li>Rele2 {statusDot(atuadores.rele2)}</li>
-        <li>Rele3 {statusDot(atuadores.rele3)}</li>
-        <li>Rele4 {statusDot(atuadores.rele4)}</li>
-        <li>Umidificador {statusDot(atuadores.umidificador)}</li>
-        <li>LEDs intensidade: {atuadores?.leds?.watts ?? atuadores?.leds?.intensity ?? 0}</li>
-      </ul>
 
+      {/* Estado atual (somente leitura) */}
+      <div className="actuator-status-grid">
+        {Object.entries(RELAY_LABELS).map(([key, label]) => (
+          <div key={key} className={`actuator-pill ${atuadores[key] ? 'actuator-on' : 'actuator-off'}`}>
+            {atuadores[key] ? '🟢' : '⚪'} {label}
+          </div>
+        ))}
+        <div className={`actuator-pill ${atuadores?.leds?.ligado ? 'actuator-on' : 'actuator-off'}`}>
+          {atuadores?.leds?.ligado ? '🟡' : '⚪'} LEDs {atuadores?.leds?.ligado ? `(${atuadores.leds.watts}/255)` : ''}
+        </div>
+        <div className={`actuator-pill ${atuadores?.umidificador ? 'actuator-on' : 'actuator-off'}`}>
+          {atuadores?.umidificador ? '🔵' : '⚪'} Umidificador
+        </div>
+      </div>
+
+      {/* Controles manuais (somente quando debug_mode=true) */}
       {debugMode && (
         <div className="manual-grid">
-          <h4>Controle manual (debug_mode)</h4>
-          {[1, 2, 3, 4].map((index) => (
-            <button
-              key={index}
-              type="button"
-              onClick={() => updateManual({ [`rele${index}`]: !manual[`rele${index}`] })}
-            >
-              Alternar rele{index}
-            </button>
+          <p style={{ width: '100%', fontSize: '0.85rem', color: '#92400e', fontWeight: 600 }}>
+            ⚠ Controle manual ativo — o ESP32 irá aplicar estes valores
+          </p>
+          {Object.entries(RELAY_LABELS).map(([key, label]) => (
+            <label key={key} className="checkbox-inline">
+              <input
+                type="checkbox"
+                checked={!!manual[key]}
+                onChange={(e) => setField(key, e.target.checked)}
+              />
+              {label}
+            </label>
           ))}
-          <label>
-            Intensidade LEDs
+          <label className="checkbox-inline">
             <input
-              type="range"
-              min="0"
-              max="255"
-              value={manual?.leds?.intensity ?? 0}
-              onChange={(e) =>
-                updateManual({
-                  leds: { ...(manual.leds || {}), intensity: Number(e.target.value), ligado: true },
-                })
-              }
+              type="checkbox"
+              checked={!!manual.leds.ligado}
+              onChange={(e) => setLedField('ligado', e.target.checked)}
             />
+            LEDs
           </label>
+          {manual.leds.ligado && (
+            <label style={{ width: '100%' }}>
+              Intensidade LEDs: {manual.leds.intensity}/255
+              <input
+                type="range" min={0} max={255}
+                value={manual.leds.intensity}
+                onChange={(e) => setLedField('intensity', Number(e.target.value))}
+              />
+            </label>
+          )}
+          <label className="checkbox-inline">
+            <input
+              type="checkbox"
+              checked={!!manual.umidificador}
+              onChange={(e) => setField('umidificador', e.target.checked)}
+            />
+            Umidificador
+          </label>
+          <button onClick={saveManual} disabled={saving} style={{ marginTop: '0.5rem' }}>
+            {saving ? 'Enviando...' : '💾 Aplicar'}
+          </button>
         </div>
       )}
     </div>

@@ -1,55 +1,128 @@
-import { motion } from 'framer-motion'
+/**
+ * SensorCards.jsx
+ * Exibe os sensores usando os campos reais do banco:
+ *   sensores.temperatura, umidade, co2, co, luminosidade, tvocs
+ *   niveis.agua (bool: true = BAIXA)
+ *   sensor_status.dht22, ccs811, mq07, ldr, waterlevel
+ */
+import { useMemo } from 'react'
 
-const mapSensors = [
-  ['temperatura', 'Temperatura', 'degC'],
-  ['umidade', 'Umidade', '%'],
-  ['co2', 'CO2', 'ppm'],
-  ['co', 'CO', 'adc'],
-  ['tvocs', 'TVOCs', 'ppb'],
-  ['luminosidade', 'Luminosidade', 'adc'],
+const SENSOR_MAP = [
+  {
+    key: 'temperatura',
+    label: 'Temperatura',
+    unit: '°C',
+    icon: '🌡️',
+    statusKey: 'dht22',
+    format: (v) => (v != null ? v.toFixed(1) : '—'),
+    warn: (v, sp) => v != null && sp && (v < sp.tMin - 2 || v > sp.tMax + 2),
+  },
+  {
+    key: 'umidade',
+    label: 'Umidade',
+    unit: '%',
+    icon: '💧',
+    statusKey: 'dht22',
+    format: (v) => (v != null ? v.toFixed(1) : '—'),
+    warn: (v, sp) => v != null && sp && (v < sp.uMin - 5 || v > sp.uMax + 5),
+  },
+  {
+    key: 'co2',
+    label: 'CO₂',
+    unit: 'ppm',
+    icon: '🫁',
+    statusKey: 'ccs811',
+    format: (v) => (v != null ? v : '—'),
+    warn: (v, sp) => v != null && sp && v > sp.co2Sp,
+  },
+  {
+    key: 'co',
+    label: 'CO',
+    unit: 'ppm',
+    icon: '💨',
+    statusKey: 'mq07',
+    format: (v) => (v != null ? v : '—'),
+    warn: (v, sp) => v != null && sp && v > sp.coSp,
+  },
+  {
+    key: 'luminosidade',
+    label: 'Luminosidade',
+    unit: 'lux',
+    icon: '☀️',
+    statusKey: 'ldr',
+    format: (v) => (v != null ? v : '—'),
+    warn: () => false,
+  },
+  {
+    key: 'tvocs',
+    label: 'TVOCs',
+    unit: 'ppb',
+    icon: '🧪',
+    statusKey: 'ccs811',
+    format: (v) => (v != null ? v : '—'),
+    warn: (v, sp) => v != null && sp && v > sp.tvocsSp,
+  },
 ]
 
-function getRelayThermalState(atuadores = {}) {
-  const heatingRelay = !!atuadores?.rele1
-  const coolingRelay = !!atuadores?.rele2
-
-  if (!heatingRelay && !coolingRelay) return { label: 'Peltier desligada →', key: 'neutral' }
-  if (heatingRelay && !coolingRelay) return { label: 'Resfriando ↓ (rele1 ON, rele2 OFF)', key: 'cooling' }
-  if (heatingRelay && coolingRelay) return { label: 'Esquentando ↑ (rele1 + rele2 ON)', key: 'warming' }
-  return { label: 'Estado invalido (rele1 OFF, rele2 ON)', key: 'mixed' }
+function sensorHealthOk(statusValue) {
+  if (!statusValue) return true
+  return statusValue.toUpperCase() === 'OK'
 }
 
-export default function SensorCards({ sensores = {}, aguaBaixa = false, atuadores = {} }) {
-  const trend = getRelayThermalState(atuadores)
+export default function SensorCards({ sensores = {}, niveis = {}, sensor_status = {}, setpoints = {}, atuadores = {} }) {
+  const aguaBaixa = !!niveis?.agua
 
   return (
-    <div className="grid sensor-grid">
-      {mapSensors.map(([key, label, unit]) => (
-        <motion.div
-          className="card sensor-card"
-          key={key}
-          initial={{ opacity: 0, y: 10 }}
-          animate={{ opacity: 1, y: 0 }}
-          transition={{ duration: 0.28 }}
-          whileHover={{ y: -6 }}
-        >
-          <h4>{label}</h4>
-          <p className="big-number">
-            {sensores[key] ?? '--'} {unit}
-          </p>
-          {key === 'temperatura' ? <p className={`trend-pill ${trend.key}`}>{trend.label}</p> : null}
-        </motion.div>
-      ))}
-      <motion.div
-        className="card sensor-card"
-        initial={{ opacity: 0, y: 10 }}
-        animate={{ opacity: 1, y: 0 }}
-        transition={{ duration: 0.28 }}
-        whileHover={{ y: -6 }}
-      >
-        <h4>Nivel de agua</h4>
-        <p className={`status ${aguaBaixa ? 'bad' : 'ok'}`}>{aguaBaixa ? '💧 BAIXO' : '✅ OK'}</p>
-      </motion.div>
+    <div className="sensor-grid grid">
+      {SENSOR_MAP.map(({ key, label, unit, icon, statusKey, format, warn }) => {
+        const value    = sensores[key]
+        const healthy  = sensorHealthOk(sensor_status[statusKey])
+        const isWarn   = warn(value, setpoints)
+
+        return (
+          <div
+            key={key}
+            className={`card sensor-card ${isWarn ? 'sensor-warn' : ''} ${!healthy ? 'sensor-error' : ''}`}
+          >
+            <div className="sensor-icon">{icon}</div>
+            <h4>{label}</h4>
+            <div className="big-number">
+              {!healthy ? <span className="sensor-na">N/A</span> : format(value)}
+              {healthy && value != null && <span className="sensor-unit"> {unit}</span>}
+            </div>
+            <span className={`status ${healthy ? 'ok' : 'bad'}`}>
+              {healthy ? 'Sensor OK' : sensor_status[statusKey] ?? 'Erro'}
+            </span>
+            {isWarn && healthy && (
+              <span className="trend-pill warming">⚠ Fora do setpoint</span>
+            )}
+          </div>
+        )
+      })}
+
+      {/* Card de nível de água */}
+      <div className={`card sensor-card ${aguaBaixa ? 'sensor-warn' : ''}`}>
+        <div className="sensor-icon">🪣</div>
+        <h4>Água</h4>
+        <div className="big-number" style={{ fontSize: '1.4rem' }}>
+          {aguaBaixa ? '⚠ BAIXA' : '✓ OK'}
+        </div>
+        <span className={`status ${aguaBaixa ? 'bad' : 'ok'}`}>
+          {sensor_status.waterlevel === 'OK' ? 'Sensor OK' : sensor_status.waterlevel ?? 'OK'}
+        </span>
+      </div>
+
+      {/* Card de LEDs (atuador visual) */}
+      <div className="card sensor-card">
+        <div className="sensor-icon">💡</div>
+        <h4>LEDs</h4>
+        <div className="big-number" style={{ fontSize: '1.4rem' }}>
+          {atuadores?.leds?.ligado ? `${atuadores.leds.watts}/255` : 'Desligado'}
+        </div>
+        <span className={`status ${atuadores?.leds?.ligado ? 'ok' : 'neutral'}`}>
+          {atuadores?.leds?.ligado ? 'Ligado' : 'Desligado'}
+        </span>
+      </div>
     </div>
   )
 }

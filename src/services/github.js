@@ -62,11 +62,12 @@ export async function findRecentWorkflowRun(token, sourceRepo, workflowFile, sin
     { params: { event: 'workflow_dispatch', per_page: 20, created: `>=${sinceIso}` } },
   )
   const runs = data?.workflow_runs || []
-  if (runSeed) {
-    const match = runs.find((r) => (r.display_title || '').includes(runSeed) || (r.name || '').includes(runSeed))
-    if (match) return match
-  }
-  return runs[0] || null
+  if (!runSeed) return runs[0] || null
+  return (
+    runs.find(
+      (r) => (r.display_title || '').includes(runSeed) || (r.name || '').includes(runSeed),
+    ) || null
+  )
 }
 
 export async function getWorkflowRun(token, sourceRepo, runId) {

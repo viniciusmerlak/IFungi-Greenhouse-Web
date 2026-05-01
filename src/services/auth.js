@@ -1,4 +1,9 @@
-import { signInWithEmailAndPassword, signOut, onAuthStateChanged } from 'firebase/auth'
+import {
+  signInWithEmailAndPassword,
+  createUserWithEmailAndPassword,
+  signOut,
+  onAuthStateChanged,
+} from 'firebase/auth'
 import { useEffect, useState } from 'react'
 import { auth, hasFirebaseConfig } from '../firebase'
 
@@ -10,6 +15,13 @@ export const loginWithEmail = (email, password) => {
     return Promise.reject(new Error(missingConfigMessage))
   }
   return signInWithEmailAndPassword(auth, email, password)
+}
+
+export const signupWithEmail = (email, password) => {
+  if (!auth || !hasFirebaseConfig) {
+    return Promise.reject(new Error(missingConfigMessage))
+  }
+  return createUserWithEmailAndPassword(auth, email, password)
 }
 
 export const logout = () => {

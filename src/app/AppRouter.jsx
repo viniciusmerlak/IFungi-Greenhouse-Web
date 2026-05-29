@@ -1,6 +1,7 @@
 import { BrowserRouter, Navigate, Route, Routes } from 'react-router-dom'
 import DashboardPage from '../features/dashboard/DashboardPage'
 import LoginPage from '../features/auth/LoginPage'
+import AISuggestionsPage from '../pages/AISuggestionsPage'
 import { useAuthState } from '../services/auth'
 
 function ProtectedRoute({ children }) {
@@ -23,6 +24,14 @@ export default function AppRouter() {
           element={
             <ProtectedRoute>
               <DashboardPage />
+            </ProtectedRoute>
+          }
+        />
+        <Route
+          path="/ai-suggestions"
+          element={
+            <ProtectedRoute>
+              <AISuggestionsPage />
             </ProtectedRoute>
           }
         />

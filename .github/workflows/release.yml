@@ -1,0 +1,37 @@
+name: Build and Release (Windows)
+
+on:
+  push:
+    tags:
+      - 'v*.*.*'
+  workflow_dispatch:
+
+jobs:
+  release:
+    name: Build Windows installer and publish
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Use Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'npm'
+
+      - name: Install dependencies
+        run: |
+          cd ifungi-ai-desktop
+          npm ci
+
+      - name: Build renderer and package app
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          cd ifungi-ai-desktop
+          npm run build
+          npm run release:ci
+
+      - name: Upload release artifacts (fallback)
+        if: failure()
+        run: echo "Release step failed; check logs"

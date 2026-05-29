@@ -6,7 +6,7 @@
 import { useEffect, useState } from 'react'
 import toast from 'react-hot-toast'
 import { motion } from 'framer-motion'
-import { Activity, Gauge, Sliders, History, LogOut, AlertTriangle } from 'lucide-react'
+import { Activity, Gauge, Sliders, History, AlertTriangle } from 'lucide-react'
 import ActuatorPanel from '../components/Dashboard/ActuatorPanel'
 import GreenhouseSelector from '../components/Dashboard/GreenhouseSelector'
 import HistoricalChart from '../components/Dashboard/HistoricalChart'
@@ -17,9 +17,10 @@ import LEDScheduleEditor from '../components/Config/LEDScheduleEditor'
 import OperationModeEditor from '../components/Config/OperationModeEditor'
 import SetpointsEditor from '../components/Config/SetpointsEditor'
 import OTAModal from '../components/OTA/OTAModal'
-import MushroomLogo from '../components/Brand/MushroomLogo'
+import AppHeader from '../components/Shared/AppHeader'
+import AppNavTabs from '../components/Shared/AppNavTabs'
 import useGreenhouseData from '../hooks/useGreenhouseData'
-import { logout, useAuthState } from '../services/auth'
+import { useAuthState } from '../services/auth'
 import { subscribeAllowedGreenhouses } from '../services/rtdb'
 
 const sectionVariants = {
@@ -53,26 +54,8 @@ export default function DashboardPage() {
 
   return (
     <main className="page">
-      <motion.header
-        className="app-header"
-        initial={{ opacity: 0, y: -12 }}
-        animate={{ opacity: 1, y: 0 }}
-        transition={{ duration: 0.45, ease: [0.2, 0.9, 0.4, 1.05] }}
-      >
-        <div className="brand">
-          <MushroomLogo size={42} />
-          <div className="brand-text">
-            <span className="brand-name">IFungi</span>
-            <span className="brand-tagline">Greenhouse · IFungi</span>
-          </div>
-        </div>
-        <div className="header-user">
-          {user?.email && <span className="user-email">{user.email}</span>}
-          <button onClick={logout} className="ghost">
-            <LogOut size={16} /> Sair
-          </button>
-        </div>
-      </motion.header>
+      <AppHeader />
+      <AppNavTabs />
 
       {!connected && (
         <motion.div

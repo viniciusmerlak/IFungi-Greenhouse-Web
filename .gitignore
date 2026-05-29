@@ -25,3 +25,10 @@ dist-ssr
 *.njsproj
 *.sln
 *.sw?
+
+# Desktop app
+ifungi-ai-desktop/node_modules
+ifungi-ai-desktop/dist
+ifungi-ai-desktop/dist-electron
+ifungi-ai-desktop/release
+ifungi-ai-desktop/.env

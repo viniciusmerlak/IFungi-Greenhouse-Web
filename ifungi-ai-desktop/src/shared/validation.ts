@@ -247,13 +247,26 @@ export function validateGeminiResponse(response: any): GeminiAnalysisResponse | 
     const observations = parseStringArray(root.observations ?? root.observations_list ?? root.observationsList)
     const risk_flags = parseStringArray(root.risk_flags ?? root.riskFlags ?? root.risk_flags_list ?? root.riskFlagsList)
 
+    const rawNoteForNextRun =
+      root.note_for_next_run ??
+      root.noteForNextRun ??
+      root.next_run_note ??
+      root.nextRunNote ??
+      root.carry_over_note ??
+      root.carryOverNote
+    const noteForNextRun =
+      typeof rawNoteForNextRun === 'string' && rawNoteForNextRun.trim()
+        ? rawNoteForNextRun.trim().slice(0, 800)
+        : undefined
+
     return {
       rationale,
       observations,
       suggested_setpoints: validateSetpoints(suggestedSetpoints),
       suggested_mode: typeof root.suggested_mode === 'string' ? root.suggested_mode : typeof root.suggestedMode === 'string' ? root.suggestedMode : undefined,
       confidence: validateConfidence(validatedConfidence),
-      risk_flags
+      risk_flags,
+      note_for_next_run: noteForNextRun
     }
   } catch (error) {
     console.error('Error validating Gemini response:', error)

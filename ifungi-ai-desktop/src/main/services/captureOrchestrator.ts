@@ -30,6 +30,15 @@ class CaptureOrchestrator {
   private lastRunAt: number | null = null
   private lastError: string | null = null
 
+  private buildPreviousNote(config: { lastAiCarryOverNote?: string; carryOverNote?: string }): string | undefined {
+    const parts = [
+      config.lastAiCarryOverNote ? `Recado da IA anterior: ${config.lastAiCarryOverNote.trim()}` : '',
+      config.carryOverNote ? `Recado manual do operador: ${config.carryOverNote.trim()}` : ''
+    ].filter(Boolean)
+
+    return parts.length ? parts.join('\n\n') : undefined
+  }
+
   async runAnalysis(payload: CapturePayload): Promise<{ success: boolean; suggestionId?: string; error?: string }> {
     if (this.isRunning) {
       return { success: false, error: 'Capture already in progress' }
@@ -74,7 +83,8 @@ class CaptureOrchestrator {
         firebaseClient.getSensorHistory(greenhouseId)
       ])
       const base64Images = payload.images.map(img => img.fullImage)
-      const analysis = await geminiAnalyzer.analyze(base64Images, greenhouseState, payload.note, sensorHistory)
+      const previousNote = this.buildPreviousNote(config)
+      const analysis = await geminiAnalyzer.analyze(base64Images, greenhouseState, payload.note, sensorHistory, previousNote)
 
       const suggestion: AISuggestion = {
         createdAt: payload.timestamp,
@@ -87,6 +97,8 @@ class CaptureOrchestrator {
         suggested_mode: analysis.suggested_mode,
         confidence: analysis.confidence,
         risk_flags: analysis.risk_flags,
+        note_for_next_run: analysis.note_for_next_run,
+        previous_note: previousNote,
         thumbnails: this.extractThumbnails(payload),
         captureMeta: {
           note: payload.note,
@@ -97,7 +109,10 @@ class CaptureOrchestrator {
       const suggestionId = await firebaseClient.writeAISuggestion(greenhouseId, suggestion)
 
       this.lastRunAt = Date.now()
-      await configStore.setConfig({ lastSuccessfulRunAt: this.lastRunAt })
+      await configStore.setConfig({
+        lastSuccessfulRunAt: this.lastRunAt,
+        lastAiCarryOverNote: analysis.note_for_next_run
+      })
 
       await captureArchive.addEntry({
         timestamp: payload.timestamp,

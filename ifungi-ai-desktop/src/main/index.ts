@@ -1,4 +1,4 @@
-import { app, BrowserWindow } from 'electron'
+import { app, BrowserWindow, powerSaveBlocker } from 'electron'
 import path from 'path'
 import { fileURLToPath } from 'url'
 import { registerIPCHandlers } from './ipc/handlers'
@@ -11,8 +11,14 @@ const __dirname = path.dirname(__filename)
 
 let mainWindow: BrowserWindow | null = null
 const singleInstanceLock = app.requestSingleInstanceLock()
+let powerSaveBlockerId: number | null = null
+let isQuitting = false
+const startHidden = process.argv.includes('--hidden')
 
 app.commandLine.appendSwitch('log-level', '3')
+app.commandLine.appendSwitch('disable-background-timer-throttling')
+app.commandLine.appendSwitch('disable-renderer-backgrounding')
+app.commandLine.appendSwitch('disable-backgrounding-occluded-windows')
 
 if (!singleInstanceLock) {
   app.quit()
@@ -37,7 +43,8 @@ function createWindow() {
     webPreferences: {
       preload: path.join(__dirname, '../preload/index.js'),
       contextIsolation: true,
-      nodeIntegration: false
+      nodeIntegration: false,
+      backgroundThrottling: false
     },
     title: 'IFungi AI Desktop',
     show: false
@@ -52,12 +59,21 @@ function createWindow() {
 
   // Show window when ready
   mainWindow.once('ready-to-show', () => {
-    mainWindow?.show()
+    if (!startHidden) {
+      mainWindow?.show()
+    }
   })
 
   scheduler.setMainWindow(mainWindow)
 
-  // Clean up on close
+  mainWindow.on('close', (event) => {
+    if (!isQuitting) {
+      event.preventDefault()
+      mainWindow?.hide()
+    }
+  })
+
+  // Clean up on destroy
   mainWindow.on('closed', () => {
     scheduler.setMainWindow(null)
     mainWindow = null
@@ -69,6 +85,16 @@ if (singleInstanceLock) {
   app.whenReady().then(() => {
     // Register IPC handlers
     registerIPCHandlers()
+
+    app.setLoginItemSettings({
+      openAtLogin: true,
+      openAsHidden: true,
+      args: ['--hidden']
+    })
+
+    if (!powerSaveBlockerId) {
+      powerSaveBlockerId = powerSaveBlocker.start('prevent-display-sleep')
+    }
 
     // Create window
     createWindow()
@@ -89,9 +115,11 @@ if (singleInstanceLock) {
 }
 
 app.on('window-all-closed', () => {
-  if (process.platform !== 'darwin') {
-    app.quit()
-  }
+  // Keep the background scheduler alive after the window is hidden/closed.
+})
+
+app.on('before-quit', () => {
+  isQuitting = true
 })
 
 // Handle uncaught errors

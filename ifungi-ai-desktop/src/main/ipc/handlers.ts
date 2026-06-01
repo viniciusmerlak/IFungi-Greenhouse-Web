@@ -89,6 +89,19 @@ export function registerIPCHandlers() {
     }
   })
 
+  ipcMain.handle(IPC_CHANNELS.HISTORY_GET_LATEST_CARRY_OVER, async () => {
+    try {
+      const config = await configStore.getConfig()
+      return {
+        aiNote: config.lastAiCarryOverNote || '',
+        operatorNote: config.carryOverNote || ''
+      }
+    } catch (error) {
+      console.error('Error getting latest carry-over note:', error)
+      return { aiNote: '', operatorNote: '' }
+    }
+  })
+
   ipcMain.handle(IPC_CHANNELS.SCHEDULER_GET_STATUS, async () => {
     try {
       return await scheduler.getStatus()

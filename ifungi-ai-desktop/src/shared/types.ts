@@ -30,6 +30,10 @@ export interface AISuggestion {
   suggested_mode?: string
   confidence: number
   risk_flags: string[]
+  /** Recado deixado por esta analise para a proxima rodada (memoria entre execucoes). */
+  note_for_next_run?: string
+  /** Recado recebido (oriundo da analise anterior + override do operador). */
+  previous_note?: string
   thumbnails?: {
     cam1?: string
     cam2?: string
@@ -51,6 +55,8 @@ export interface GeminiAnalysisResponse {
   suggested_mode?: string
   confidence: number
   risk_flags: string[]
+  /** Recado livre (PT-BR, max ~600 chars) para a proxima analise. */
+  note_for_next_run?: string
 }
 
 // ============================================================================
@@ -91,6 +97,13 @@ export interface AppConfig {
   lastRunAt?: number
   lastSuccessfulRunAt?: number
   geminiQuotaBlockedUntil?: number
+  /**
+   * Recado manual do operador para acompanhar a proxima analise.
+   * Concatenado ao recado da IA da rodada anterior.
+   */
+  carryOverNote?: string
+  /** Ultimo recado gerado pela IA para alimentar a rodada seguinte. */
+  lastAiCarryOverNote?: string
 }
 
 export interface SecureConfig {
@@ -156,6 +169,7 @@ export const IPC_CHANNELS = {
   // History
   HISTORY_GET: 'history:get',
   HISTORY_GET_LOCAL: 'history:get-local',
+  HISTORY_GET_LATEST_CARRY_OVER: 'history:get-latest-carry-over',
   
   // Scheduler
   SCHEDULER_GET_STATUS: 'scheduler:get-status',

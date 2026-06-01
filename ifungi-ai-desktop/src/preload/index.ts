@@ -15,6 +15,7 @@ contextBridge.exposeInMainWorld('electronAPI', {
   // History
   getHistory: (limit?: number) => ipcRenderer.invoke(IPC_CHANNELS.HISTORY_GET, limit),
   getLocalHistory: (limit?: number) => ipcRenderer.invoke(IPC_CHANNELS.HISTORY_GET_LOCAL, limit),
+  getLatestCarryOverNote: () => ipcRenderer.invoke(IPC_CHANNELS.HISTORY_GET_LATEST_CARRY_OVER),
 
   // Scheduler
   getSchedulerStatus: () => ipcRenderer.invoke(IPC_CHANNELS.SCHEDULER_GET_STATUS),
@@ -74,6 +75,7 @@ export interface ElectronAPI {
   getCaptureStatus: () => Promise<any>
   getHistory: (limit?: number) => Promise<any[]>
   getLocalHistory: (limit?: number) => Promise<any[]>
+  getLatestCarryOverNote: () => Promise<{ aiNote: string; operatorNote: string }>
   getSchedulerStatus: () => Promise<any>
   setScheduleTime: (time: string) => Promise<void>
   onScheduledCapture: (callback: () => void) => () => void

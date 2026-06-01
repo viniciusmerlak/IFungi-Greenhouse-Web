@@ -208,6 +208,31 @@ function extractJsonObject(text: string): unknown {
   }
 }
 
+function getResponseText(result: any): string {
+  if (typeof result?.text === 'string' && result.text.trim()) {
+    return result.text
+  }
+
+  const candidate = result?.candidates?.[0]
+  if (candidate?.content?.parts?.length) {
+    const text = candidate.content.parts
+      .filter((part: any) => typeof part.text === 'string')
+      .map((part: any) => part.text)
+      .join('')
+      .trim()
+
+    if (text) {
+      return text
+    }
+  }
+
+  if (typeof result?.data === 'string' && result.data.trim()) {
+    return result.data
+  }
+
+  return ''
+}
+
 async function getPersistedQuotaBlock(): Promise<number | undefined> {
   const config = await configStore.getConfig()
   return config.geminiQuotaBlockedUntil
@@ -255,7 +280,8 @@ class GeminiAnalyzer {
     images: string[],
     greenhouseState: GreenhouseState,
     userNote?: string,
-    sensorHistory: SensorHistoryEntry[] = []
+    sensorHistory: SensorHistoryEntry[] = [],
+    previousNote?: string
   ): Promise<GeminiAnalysisResponse> {
     const persistedQuotaBlockedUntil = await getPersistedQuotaBlock()
     const quotaBlockedUntil = this.quotaBlockedUntil || persistedQuotaBlockedUntil
@@ -271,7 +297,52 @@ class GeminiAnalyzer {
       throw new Error('Falha ao inicializar o cliente Gemini AI')
     }
 
-    const prompt = getMushroomExpertPrompt(greenhouseState, userNote, sensorHistory)
+    const prompt = getMushroomExpertPrompt(
+      greenhouseState,
+      userNote,
+      sensorHistory,
+      undefined,
+      undefined,
+      previousNote
+    )
+    const responseJsonSchema = {
+      type: 'object',
+      properties: {
+        rationale: { type: 'string' },
+        observations: {
+          type: 'array',
+          items: { type: 'string' },
+          minItems: 0
+        },
+        suggested_setpoints: {
+          type: 'object',
+          properties: {
+            tMin: { type: 'number' },
+            tMax: { type: 'number' },
+            uMin: { type: 'number' },
+            uMax: { type: 'number' },
+            coSp: { type: 'number' },
+            co2Sp: { type: 'number' },
+            tvocsSp: { type: 'number' },
+            lux: { type: 'number' }
+          },
+          required: ['tMin', 'tMax', 'uMin', 'uMax', 'coSp', 'co2Sp', 'tvocsSp', 'lux'],
+          additionalProperties: true
+        },
+        suggested_mode: {
+          type: 'string',
+          enum: ['manual', 'incubacao', 'frutificacao', 'secagem', 'manutencao']
+        },
+        confidence: { type: 'number' },
+        risk_flags: {
+          type: 'array',
+          items: { type: 'string' }
+        },
+        note_for_next_run: { type: 'string' }
+      },
+      required: ['rationale', 'suggested_setpoints', 'confidence', 'risk_flags', 'note_for_next_run'],
+      additionalProperties: true
+    }
 
     const imageParts = images.map((base64) => ({
       inlineData: {
@@ -296,25 +367,42 @@ class GeminiAnalyzer {
             }
           ],
           config: {
-            temperature: 0.4,
-            topP: 0.8,
-            topK: 40,
-            maxOutputTokens: 4096,
-            responseMimeType: 'application/json'
+            temperature: 0,
+            topP: 0,
+            topK: 1,
+            // gemini-2.5-flash usa thinking tokens por padrao (orcamento dinamico)
+            // que consomem o mesmo budget de maxOutputTokens. Como esta chamada e
+            // deterministica (temperature 0 + schema estruturado), desativamos o
+            // thinking para nao truncar o JSON quando o operator note e longo.
+            thinkingConfig: { thinkingBudget: 0 },
+            // Margem confortavel para o JSON completo do schema, mesmo com
+            // observations/risk_flags extensos e descricoes detalhadas.
+            maxOutputTokens: 16384,
+            responseMimeType: 'application/json',
+            responseJsonSchema
           }
         })
-        const text = result.text || ''
+        const text = getResponseText(result)
 
         let parsedResponse: unknown
         try {
           parsedResponse = extractJsonObject(text)
-        } catch {
-          throw new Error(`Falha ao interpretar resposta do Gemini: ${text}`)
+        } catch (parseError) {
+          console.error('Gemini response text parse failed, raw result:', result)
+          const reason = parseError instanceof Error ? parseError.message : String(parseError)
+          const preview = text ? text.slice(0, 800) : '(resposta vazia)'
+          throw new Error(`Falha ao interpretar resposta do Gemini (${reason}). Trecho: ${preview}`)
         }
 
         const validated = validateGeminiResponse(parsedResponse)
         if (!validated) {
-          throw new Error('Resposta do Gemini invalida')
+          const preview = text ? text.slice(0, 800) : '(resposta vazia)'
+          const keys = parsedResponse && typeof parsedResponse === 'object'
+            ? Object.keys(parsedResponse as Record<string, unknown>).join(', ')
+            : 'nenhuma'
+          throw new Error(
+            `Resposta do Gemini invalida (chaves recebidas: ${keys}; tamanho bruto: ${text.length} chars). Trecho: ${preview}`
+          )
         }
 
         return validated

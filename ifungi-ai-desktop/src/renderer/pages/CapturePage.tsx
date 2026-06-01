@@ -16,6 +16,7 @@ export default function CapturePage() {
   const [schedulerStatus, setSchedulerStatus] = useState<any>(null)
   const [captureStatus, setCaptureStatus] = useState<any>(null)
   const [runGeminiAnalysis, setRunGeminiAnalysis] = useState(false)
+  const [carryOver, setCarryOver] = useState<{ aiNote: string; operatorNote: string } | null>(null)
   const videoRefs = useRef<(HTMLVideoElement | null)[]>([])
 
   const selectedCameraKey = useMemo(
@@ -91,6 +92,7 @@ export default function CapturePage() {
       ])
       setSchedulerStatus(sched)
       setCaptureStatus(cap)
+      window.electronAPI.getLatestCarryOverNote().then(setCarryOver).catch(() => undefined)
     } catch {
       // ignore
     }
@@ -100,7 +102,7 @@ export default function CapturePage() {
     try {
       const savedConfig = await window.electronAPI.getConfig()
       setConfig(savedConfig)
-      setRunGeminiAnalysis(false)
+      setRunGeminiAnalysis(savedConfig?.geminiAnalysisEnabled !== false)
       await refreshMeta()
     } catch (error) {
       console.error('Failed to load config:', error)
@@ -189,6 +191,12 @@ export default function CapturePage() {
             <strong>Capture pipeline:</strong> {captureStatus?.isRunning ? 'running...' : 'idle'}
             {captureStatus?.lastError ? ` (last status: ${captureStatus.lastError})` : ''}
           </div>
+          {(carryOver?.aiNote || carryOver?.operatorNote) && (
+            <div>
+              <strong>Next AI context:</strong>{' '}
+              {[carryOver.aiNote, carryOver.operatorNote].filter(Boolean).join(' / ')}
+            </div>
+          )}
         </div>
       </div>
 
@@ -216,9 +224,12 @@ export default function CapturePage() {
             onChange={(e) => setNote(e.target.value)}
             placeholder={geminiDisabled
               ? 'Notes saved with the local test capture...'
-              : 'Add any observations or context for the AI analysis...'}
+              : 'Add any observations or context for the Gemini analysis...'}
             style={{ resize: 'vertical' }}
           />
+          <p className="text-muted text-small mt-2">
+            This text is included in the Gemini analysis prompt as image context and operator guidance.
+          </p>
         </div>
       </div>
 

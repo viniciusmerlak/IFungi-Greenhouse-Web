@@ -1,11 +1,11 @@
 {
   "name": "ifungi-ai-desktop",
-  "version": "1.0.0",
+  "version": "1.0.1",
   "description": "IFungi AI Desktop - Local AI agent for mushroom greenhouse optimization",
   "author": "IFungi AI Desktop Team",
   "repository": {
     "type": "git",
-    "url": "https://github.com/SEU_USUARIO/SEU_REPO.git"
+    "url": "https://github.com/viniciusmerlak/IFungi-Greenhouse-Web.git"
   },
   "main": "dist-electron/main/index.js",
   "type": "module",
@@ -66,7 +66,10 @@
       "target": [
         {
           "target": "nsis",
-          "arch": ["x64", "ia32"]
+          "arch": [
+            "x64",
+            "ia32"
+          ]
         },
         "portable"
       ],
@@ -81,8 +84,7 @@
       "target": [
         "AppImage"
       ]
-    }
-    ,
+    },
     "nsis": {
       "oneClick": false,
       "perMachine": false,
@@ -104,8 +106,8 @@
     "publish": [
       {
         "provider": "github",
-        "owner": "SEU_USUARIO",
-        "repo": "SEU_REPO",
+        "owner": "viniciusmerlak",
+        "repo": "IFungi-Greenhouse-Web",
         "releaseType": "release"
       }
     ]

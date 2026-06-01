@@ -8,7 +8,8 @@ export default function SetupPage() {
     greenhouseId: '',
     selectedCameras: [] as string[],
     geminiAnalysisEnabled: true,
-    dailyCaptureTime: '09:00'
+    dailyCaptureTime: '09:00',
+    carryOverNote: ''
   })
   const [savedFlags, setSavedFlags] = useState({ hasGeminiApiKey: false, hasFirebasePassword: false })
   const [cameras, setCameras] = useState<MediaDeviceInfo[]>([])
@@ -40,7 +41,14 @@ export default function SetupPage() {
     try {
       const devices = await navigator.mediaDevices.enumerateDevices()
       const videoDevices = devices.filter((d) => d.kind === 'videoinput')
+      const validDeviceIds = videoDevices.map((device) => device.deviceId)
       setCameras(videoDevices)
+      setConfig((prev) => {
+        const selectedCameras = prev.selectedCameras.filter((id) => validDeviceIds.includes(id))
+        return selectedCameras.length === prev.selectedCameras.length
+          ? prev
+          : { ...prev, selectedCameras: selectedCameras.slice(0, 2) }
+      })
     } catch (error) {
       console.error('Failed to enumerate cameras:', error)
     }
@@ -67,7 +75,8 @@ export default function SetupPage() {
         greenhouseId: config.greenhouseId,
         selectedCameras: config.selectedCameras,
         geminiAnalysisEnabled: config.geminiAnalysisEnabled,
-        dailyCaptureTime: config.dailyCaptureTime || undefined
+        dailyCaptureTime: config.dailyCaptureTime || undefined,
+        carryOverNote: config.carryOverNote.trim() || undefined
       }
 
       if (config.geminiApiKey.trim()) {
@@ -221,10 +230,14 @@ export default function SetupPage() {
                 display: 'flex',
                 alignItems: 'center',
                 padding: '0.75rem',
-                border: '1px solid #ddd',
-                borderRadius: '4px',
+                border: config.selectedCameras.includes(camera.deviceId)
+                  ? '1px solid rgba(6, 182, 212, 0.55)'
+                  : '1px solid rgba(255, 124, 178, 0.18)',
+                borderRadius: '8px',
                 cursor: 'pointer',
-                background: config.selectedCameras.includes(camera.deviceId) ? '#e3f2fd' : '#fff'
+                background: config.selectedCameras.includes(camera.deviceId)
+                  ? 'rgba(6, 182, 212, 0.14)'
+                  : 'rgba(255, 255, 255, 0.04)'
               }}
             >
               <input
@@ -263,6 +276,25 @@ export default function SetupPage() {
             Leave empty to disable scheduled captures.
             When the app is open, a scheduled run fires once per day near this time if it has not succeeded yet today.
             Manual captures always work from the Capture page.
+          </p>
+        </div>
+      </div>
+
+      <div className="card">
+        <h2 className="card-title">Recado para a proxima IA</h2>
+        <div className="form-group">
+          <label className="form-label" htmlFor="carry-over-note">Recado manual persistente</label>
+          <textarea
+            id="carry-over-note"
+            className="form-input"
+            rows={4}
+            value={config.carryOverNote}
+            onChange={(e) => setConfig({ ...config, carryOverNote: e.target.value })}
+            placeholder="Ex.: tinha contaminacao, conferir se piorou ou melhorou; fiz mais troca de ar e reduzi umidade."
+            style={{ resize: 'vertical' }}
+          />
+          <p className="text-muted text-small mt-2">
+            Este texto entra em toda proxima analise junto com o recado que a IA deixou na rodada anterior.
           </p>
         </div>
       </div>

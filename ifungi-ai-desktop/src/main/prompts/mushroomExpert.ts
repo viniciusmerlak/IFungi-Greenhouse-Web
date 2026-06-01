@@ -149,6 +149,7 @@ function summarizeHistory(history: SensorHistoryEntry[] = []): string {
  * @param sensorHistory     Sorted array of historical sensor entries
  * @param sensorStatus      Latest sensor_status node from Firebase
  * @param substrateContext  Operator-supplied substrate/flush metadata (optional)
+ * @param previousNote      Recado deixado pela analise anterior + override do operador (optional)
  */
 export function getMushroomExpertPrompt(
   greenhouseState:  GreenhouseState,
@@ -163,7 +164,8 @@ export function getMushroomExpertPrompt(
     containerNotes?:      string   // e.g. "jar A fully colonized, jar B ~60%"
     lastHarvestDate?:     string   // ISO date of previous flush harvest
     spawnRunStage?:       string   // e.g. "spawn run complete", "60% colonized"
-  }
+  },
+  previousNote?: string
 ): string {
   const { sensores, setpoints, operation_mode } = greenhouseState
 
@@ -392,6 +394,24 @@ Never contradict a clear operator observation with conflicting sensor data witho
 
 ---
 
+## CARRY-OVER NOTE FROM PREVIOUS ANALYSIS (RECADO ANTERIOR)
+
+${previousNote?.trim() || 'No carry-over note from a previous analysis.'}
+
+This is a free-text note left by your previous run (and possibly amended by the operator) summarizing what was pending or what to verify in the current run. Treat it as an active TODO list:
+- Explicitly confirm or update each pending item from the previous note
+- If a pending issue persists, escalate or change the recommendation
+- If a pending issue improved or resolved, mention it in the rationale
+
+You MUST also produce a NEW carry-over note in the field "note_for_next_run" (PT-BR, max 600 chars) summarizing:
+- pending issues to verify next run (e.g. "verificar se a contaminacao na borda direita do pote A piorou")
+- recent changes you recommended that need follow-up
+- any specific moment to revisit (e.g. "checar pinos no proximo flush em ~3 dias")
+
+Keep it concise and actionable. Do NOT repeat the full rationale here.
+
+---
+
 ## CURRENT GREENHOUSE STATE
 
 ### Sensor Readings
@@ -561,7 +581,8 @@ Use EXACTLY this structure:
   },
   "suggested_mode": "manual|incubacao|frutificacao|secagem|manutencao",
   "confidence": number,
-  "risk_flags": ["snake_case — e.g. contamination_suspected, harvest_urgent, sensor_fault_th, substrate_dry, abort_risk, co2_elevated, humidity_unstable"]
+  "risk_flags": ["snake_case — e.g. contamination_suspected, harvest_urgent, sensor_fault_th, substrate_dry, abort_risk, co2_elevated, humidity_unstable"],
+  "note_for_next_run": "string — PT-BR, max 600 chars, recado livre para a proxima analise (pendencias a verificar, mudancas a acompanhar, prazos)"
 }
 
 ---
@@ -588,5 +609,8 @@ Use EXACTLY this structure:
 18. risk_flags must use snake_case
 19. If CO/CO2 reads 0 and uptime is unknown, add "co_sensor_warmup_possible" to risk_flags
 20. If any sensor is FAULT, add the appropriate flag: "sensor_fault_th", "sensor_fault_gas", "sensor_fault_co", "sensor_fault_light"
+21. If you are unsure about a value, still return valid JSON; use null or [] as needed
+22. The output must be exactly one JSON object and nothing else
+23. note_for_next_run is REQUIRED on every response. Even on a calm/stable run, write at least a brief reminder of what to verify next time.
 `.trim()
 }

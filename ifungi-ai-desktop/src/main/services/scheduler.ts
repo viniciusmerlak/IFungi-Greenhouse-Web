@@ -3,6 +3,7 @@ import { IPC_CHANNELS } from '@shared/types'
 import { configStore } from './configStore'
 
 const SCHEDULE_GRACE_MS = 15 * 60 * 1000
+const RETRY_INTERVAL_MS = 2 * 60 * 1000
 
 /**
  * Simple scheduler for daily capture tasks.
@@ -12,6 +13,7 @@ class Scheduler {
   private lastCheckDate: string | null = null
   private mainWindow: BrowserWindow | null = null
   private triggering = false
+  private lastTriggerAt: number | null = null
 
   setMainWindow(window: BrowserWindow | null) {
     this.mainWindow = window
@@ -60,19 +62,22 @@ class Scheduler {
         return
       }
 
-      const lastAttempt = config.lastRunAt
-      const lastAttemptDate = lastAttempt ? new Date(lastAttempt).toISOString().split('T')[0] : null
+      const lastSuccess = config.lastSuccessfulRunAt
+      const lastSuccessDate = lastSuccess ? new Date(lastSuccess).toISOString().split('T')[0] : null
 
-      if (lastAttemptDate === today) {
+      if (lastSuccessDate === today) {
         this.lastCheckDate = today
+        return
+      }
+
+      if (this.lastTriggerAt && now.getTime() - this.lastTriggerAt < RETRY_INTERVAL_MS) {
         return
       }
 
       const triggered = await this.triggerScheduledCapture()
 
       if (triggered) {
-        await configStore.setConfig({ lastRunAt: Date.now() })
-        this.lastCheckDate = today
+        this.lastTriggerAt = now.getTime()
       }
     } catch (error) {
       console.error('Scheduler check failed:', error)

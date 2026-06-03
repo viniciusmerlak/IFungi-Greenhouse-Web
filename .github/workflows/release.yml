@@ -16,20 +16,21 @@ jobs:
       - name: Use Node.js
         uses: actions/setup-node@v4
         with:
-          node-version: '20'
+          node-version: '22'
           cache: 'npm'
+          cache-dependency-path: ifungi-ai-desktop/package-lock.json
 
       - name: Install dependencies
         run: |
           cd ifungi-ai-desktop
-          npm ci
+          npm ci --no-audit --no-fund
 
       - name: Build renderer and package app
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           cd ifungi-ai-desktop
-          npm run build
+          npm run electron:build
           npm run release:ci
 
       - name: Upload release artifacts (fallback)

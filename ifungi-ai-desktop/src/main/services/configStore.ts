@@ -118,7 +118,10 @@ class ConfigStore {
     return {
       selectedCameras: [],
       geminiAnalysisEnabled: true,
-      dailyCaptureTime: '09:00'
+      dailyCaptureTime: '09:00',
+      aiModelId: 'gemini-2.5-flash',
+      includeHistoricalImages: false,
+      historicalImageLimit: 4
     }
   }
 }

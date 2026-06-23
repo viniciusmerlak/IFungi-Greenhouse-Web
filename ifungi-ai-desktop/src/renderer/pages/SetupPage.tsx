@@ -1,4 +1,5 @@
 import { useState, useEffect } from 'react'
+import { AI_MODEL_OPTIONS, DEFAULT_AI_MODEL_ID } from '@shared/types'
 
 export default function SetupPage() {
   const [config, setConfig] = useState({
@@ -8,6 +9,10 @@ export default function SetupPage() {
     greenhouseId: '',
     selectedCameras: [] as string[],
     geminiAnalysisEnabled: true,
+    aiModelId: DEFAULT_AI_MODEL_ID,
+    customAiModelId: '',
+    includeHistoricalImages: false,
+    historicalImageLimit: 4,
     dailyCaptureTime: '09:00',
     carryOverNote: ''
   })
@@ -25,10 +30,14 @@ export default function SetupPage() {
     try {
       const savedConfig = await window.electronAPI.getConfig()
       const { hasGeminiApiKey, hasFirebasePassword, ...rest } = savedConfig
+      const savedModelId = typeof rest.aiModelId === 'string' ? rest.aiModelId : DEFAULT_AI_MODEL_ID
+      const knownModel = AI_MODEL_OPTIONS.some((option) => option.id === savedModelId)
       setSavedFlags({ hasGeminiApiKey: !!hasGeminiApiKey, hasFirebasePassword: !!hasFirebasePassword })
       setConfig((prev) => ({
         ...prev,
         ...rest,
+        aiModelId: knownModel ? savedModelId : 'custom',
+        customAiModelId: knownModel ? prev.customAiModelId : savedModelId,
         geminiApiKey: '',
         firebasePassword: ''
       }))
@@ -75,6 +84,9 @@ export default function SetupPage() {
         greenhouseId: config.greenhouseId,
         selectedCameras: config.selectedCameras,
         geminiAnalysisEnabled: config.geminiAnalysisEnabled,
+        aiModelId: (config.aiModelId === 'custom' ? config.customAiModelId : config.aiModelId).trim() || DEFAULT_AI_MODEL_ID,
+        includeHistoricalImages: config.includeHistoricalImages,
+        historicalImageLimit: Number(config.historicalImageLimit) || 4,
         dailyCaptureTime: config.dailyCaptureTime || undefined,
         carryOverNote: config.carryOverNote.trim() || undefined
       }
@@ -133,7 +145,7 @@ export default function SetupPage() {
       </div>
 
       <div className="card">
-        <h2 className="card-title">Gemini API Key</h2>
+        <h2 className="card-title">AI model</h2>
         <div className="form-group">
           <label
             className="form-label"
@@ -150,6 +162,46 @@ export default function SetupPage() {
             Turn this off for camera/capture tests without calling the Gemini API.
           </p>
         </div>
+        <div className="form-group">
+          <label className="form-label" htmlFor="ai-model">Modelo gratuito / baixo custo</label>
+          <select
+            id="ai-model"
+            className="form-select"
+            value={AI_MODEL_OPTIONS.some((option) => option.id === config.aiModelId) ? config.aiModelId : 'custom'}
+            onChange={(e) => {
+              const value = e.target.value
+              setConfig({
+                ...config,
+                aiModelId: value,
+                customAiModelId: value === 'custom' && config.aiModelId !== 'custom' ? config.aiModelId : config.customAiModelId
+              })
+            }}
+          >
+            {AI_MODEL_OPTIONS.map((option) => (
+              <option key={option.id} value={option.id}>
+                {option.label}
+              </option>
+            ))}
+            <option value="custom">Outro modelo Gemini...</option>
+          </select>
+          <p className="text-muted text-small mt-2">
+            {AI_MODEL_OPTIONS.find((option) => option.id === config.aiModelId)?.description ||
+              'Use um ID de modelo compativel com sua chave do Google AI Studio.'}
+          </p>
+        </div>
+        {config.aiModelId === 'custom' && (
+          <div className="form-group">
+            <label className="form-label" htmlFor="custom-ai-model">ID do modelo customizado</label>
+            <input
+              id="custom-ai-model"
+              type="text"
+              className="form-input"
+              value={config.customAiModelId}
+              onChange={(e) => setConfig({ ...config, customAiModelId: e.target.value })}
+              placeholder="gemini-2.5-flash"
+            />
+          </div>
+        )}
         <div className="form-group">
           <label className="form-label">
             Gemini API Key
@@ -170,6 +222,33 @@ export default function SetupPage() {
             placeholder={savedFlags.hasGeminiApiKey ? '•••••••• (saved — leave blank to keep)' : 'Enter your Gemini API key'}
           />
         </div>
+        <div className="form-group">
+          <label className="checkbox-row">
+            <input
+              type="checkbox"
+              checked={config.includeHistoricalImages}
+              onChange={(e) => setConfig({ ...config, includeHistoricalImages: e.target.checked })}
+            />
+            <span>Enviar fotos historicas nas analises</span>
+          </label>
+          <p className="text-muted text-small mt-2">
+            As fotos atuais sempre vao primeiro; as antigas entram depois como comparacao temporal.
+          </p>
+        </div>
+        {config.includeHistoricalImages && (
+          <div className="form-group">
+            <label className="form-label" htmlFor="historical-image-limit">Quantidade maxima de fotos antigas</label>
+            <input
+              id="historical-image-limit"
+              type="number"
+              min={1}
+              max={12}
+              className="form-input"
+              value={config.historicalImageLimit}
+              onChange={(e) => setConfig({ ...config, historicalImageLimit: Number(e.target.value) })}
+            />
+          </div>
+        )}
       </div>
 
       <div className="card">

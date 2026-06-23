@@ -41,6 +41,7 @@ export interface AISuggestion {
   captureMeta?: {
     note?: string
     localPaths: string[]
+    historicalLocalPaths?: string[]
   }
   reviewedAt?: number
   reviewAction?: 'approved' | 'rejected'
@@ -104,6 +105,12 @@ export interface AppConfig {
   carryOverNote?: string
   /** Ultimo recado gerado pela IA para alimentar a rodada seguinte. */
   lastAiCarryOverNote?: string
+  /** Modelo Gemini usado na analise visual. */
+  aiModelId?: string
+  /** Inclui capturas anteriores salvas localmente como contexto visual temporal. */
+  includeHistoricalImages?: boolean
+  /** Quantidade maxima de fotos antigas anexadas ao prompt. */
+  historicalImageLimit?: number
 }
 
 export interface SecureConfig {
@@ -126,6 +133,7 @@ export interface CapturePayload {
   note?: string
   timestamp: number
   skipGeminiAnalysis?: boolean
+  includeHistoricalImages?: boolean
 }
 
 export interface CapturedImage {
@@ -192,3 +200,28 @@ export const IPC_CHANNELS = {
   UPDATE_PROGRESS: 'update:progress',
   UPDATE_INSTALL: 'update:install'
 } as const
+
+export const AI_MODEL_OPTIONS = [
+  {
+    id: 'gemini-2.5-flash',
+    label: 'Gemini 2.5 Flash',
+    description: 'Melhor equilibrio gratuito/baixo custo para analise visual detalhada.'
+  },
+  {
+    id: 'gemini-2.5-flash-lite',
+    label: 'Gemini 2.5 Flash-Lite',
+    description: 'Mais rapido e economico; bom para rotina diaria com menos detalhes.'
+  },
+  {
+    id: 'gemini-3.1-flash-lite',
+    label: 'Gemini 3.1 Flash-Lite',
+    description: 'Modelo leve mais novo; use se sua chave tiver acesso.'
+  },
+  {
+    id: 'gemini-3.5-flash',
+    label: 'Gemini 3.5 Flash',
+    description: 'Modelo Flash atual mais forte; pode ter limites gratuitos menores.'
+  }
+] as const
+
+export const DEFAULT_AI_MODEL_ID = 'gemini-2.5-flash'

@@ -16,6 +16,7 @@ export default function CapturePage() {
   const [schedulerStatus, setSchedulerStatus] = useState<any>(null)
   const [captureStatus, setCaptureStatus] = useState<any>(null)
   const [runGeminiAnalysis, setRunGeminiAnalysis] = useState(false)
+  const [includeHistoricalImages, setIncludeHistoricalImages] = useState(false)
   const [carryOver, setCarryOver] = useState<{ aiNote: string; operatorNote: string } | null>(null)
   const videoRefs = useRef<(HTMLVideoElement | null)[]>([])
 
@@ -103,6 +104,7 @@ export default function CapturePage() {
       const savedConfig = await window.electronAPI.getConfig()
       setConfig(savedConfig)
       setRunGeminiAnalysis(savedConfig?.geminiAnalysisEnabled !== false)
+      setIncludeHistoricalImages(savedConfig?.includeHistoricalImages === true)
       await refreshMeta()
     } catch (error) {
       console.error('Failed to load config:', error)
@@ -120,7 +122,7 @@ export default function CapturePage() {
 
     try {
       const images = await captureImagesFromVideoElements(videoRefs.current, config.selectedCameras)
-      const result = await submitCapturedImages(images, note, !runGeminiAnalysis)
+      const result = await submitCapturedImages(images, note, !runGeminiAnalysis, includeHistoricalImages)
       setCaptureResult(result)
 
       if (result.success) {
@@ -213,6 +215,18 @@ export default function CapturePage() {
         </label>
         <p className="text-muted text-small mb-2">
           Leave unchecked to validate camera capture only. Check it when the Gemini API key/project is ready for external API calls.
+        </p>
+        <label className="checkbox-row mb-2">
+          <input
+            type="checkbox"
+            checked={includeHistoricalImages}
+            onChange={(e) => setIncludeHistoricalImages(e.target.checked)}
+            disabled={geminiDisabled}
+          />
+          <span>Include previous local photos as AI context</span>
+        </label>
+        <p className="text-muted text-small mb-2">
+          Current photos are sent first; older captures are appended only for temporal comparison.
         </p>
         <div className="form-group">
           <label className="form-label" htmlFor="capture-note">Operator note (optional)</label>

@@ -56,6 +56,27 @@ class CaptureArchive {
       return []
     }
   }
+
+  async getRecentSuccessfulImagePaths(greenhouseId: string, limit = 4): Promise<string[]> {
+    const entries = await this.getEntries(100)
+    const paths: string[] = []
+
+    for (const entry of entries) {
+      if (entry.greenhouseId !== greenhouseId || entry.status !== 'success') continue
+
+      for (const localPath of entry.localPaths) {
+        if (!paths.includes(localPath)) {
+          paths.push(localPath)
+        }
+
+        if (paths.length >= limit) {
+          return paths
+        }
+      }
+    }
+
+    return paths
+  }
 }
 
 export const captureArchive = new CaptureArchive()

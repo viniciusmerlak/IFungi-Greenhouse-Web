@@ -1,5 +1,5 @@
 import { GoogleGenAI } from '@google/genai'
-import { GeminiAnalysisResponse, GreenhouseState, SensorHistoryEntry } from '@shared/types'
+import { DEFAULT_AI_MODEL_ID, GeminiAnalysisResponse, GreenhouseState, SensorHistoryEntry } from '@shared/types'
 import { validateGeminiResponse } from '@shared/validation'
 import { configStore } from './configStore'
 import { getMushroomExpertPrompt } from '../prompts/mushroomExpert'
@@ -7,7 +7,6 @@ import { getMushroomExpertPrompt } from '../prompts/mushroomExpert'
 const MAX_RETRIES = 3
 const RETRY_BASE_DELAY_MS = 65_000
 const DAILY_QUOTA_COOLDOWN_MS = 12 * 60 * 60 * 1000
-const GEMINI_MODEL = 'gemini-2.5-flash'
 
 function sleep(ms: number) {
   return new Promise(resolve => setTimeout(resolve, ms))
@@ -65,6 +64,12 @@ function getDailyQuotaMessage(blockedUntil?: number): string {
     'A quota e renovada automaticamente a meia-noite no horario do Pacifico, ou apos ajuste de faturamento/quota no Google AI Studio.' +
     retryText
   )
+}
+
+function normalizeModelId(modelId?: string): string {
+  const trimmed = modelId?.trim()
+  if (!trimmed) return DEFAULT_AI_MODEL_ID
+  return /^[a-z0-9_.:-]+$/i.test(trimmed) ? trimmed : DEFAULT_AI_MODEL_ID
 }
 
 function appendMissingClosures(text: string): string {
@@ -281,7 +286,8 @@ class GeminiAnalyzer {
     greenhouseState: GreenhouseState,
     userNote?: string,
     sensorHistory: SensorHistoryEntry[] = [],
-    previousNote?: string
+    previousNote?: string,
+    modelId?: string
   ): Promise<GeminiAnalysisResponse> {
     const persistedQuotaBlockedUntil = await getPersistedQuotaBlock()
     const quotaBlockedUntil = this.quotaBlockedUntil || persistedQuotaBlockedUntil
@@ -356,7 +362,7 @@ class GeminiAnalyzer {
     for (let attempt = 1; attempt <= MAX_RETRIES; attempt++) {
       try {
         const result = await this.genAI.models.generateContent({
-          model: GEMINI_MODEL,
+          model: normalizeModelId(modelId),
           contents: [
             {
               role: 'user',

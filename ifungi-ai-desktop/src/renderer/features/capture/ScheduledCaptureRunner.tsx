@@ -123,7 +123,12 @@ export default function ScheduledCaptureRunner() {
         }
 
         const images = await captureImagesFromVideoElements(videoRefs.current, selectedCameras)
-        const result = await submitCapturedImages(images, undefined, config.geminiAnalysisEnabled === false)
+        const result = await submitCapturedImages(
+          images,
+          undefined,
+          config.geminiAnalysisEnabled === false,
+          config.includeHistoricalImages === true
+        )
         if (!result.success) {
           console.error('Scheduled capture failed:', result.error)
         }

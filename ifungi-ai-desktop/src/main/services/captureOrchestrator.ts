@@ -22,6 +22,16 @@ function toSafeFilenamePart(value: string): string {
     .slice(0, 80) || 'camera'
 }
 
+async function imageFileToDataUrl(filepath: string): Promise<string | null> {
+  try {
+    const buffer = await fs.readFile(filepath)
+    return `data:image/jpeg;base64,${buffer.toString('base64')}`
+  } catch (error) {
+    console.warn(`Failed to read historical capture image: ${filepath}`, error)
+    return null
+  }
+}
+
 /**
  * Orchestrates the full capture → analyze → validate → write pipeline
  */
@@ -83,8 +93,28 @@ class CaptureOrchestrator {
         firebaseClient.getSensorHistory(greenhouseId)
       ])
       const base64Images = payload.images.map(img => img.fullImage)
+      const historicalImageLimit = Math.max(0, Math.min(Number(config.historicalImageLimit || 4), 12))
+      const includeHistoricalImages = payload.includeHistoricalImages ?? config.includeHistoricalImages === true
+      const historicalLocalPaths = includeHistoricalImages
+        ? await captureArchive.getRecentSuccessfulImagePaths(greenhouseId, historicalImageLimit)
+        : []
+      const historicalImages = (await Promise.all(historicalLocalPaths.map(imageFileToDataUrl)))
+        .filter((image): image is string => !!image)
       const previousNote = this.buildPreviousNote(config)
-      const analysis = await geminiAnalyzer.analyze(base64Images, greenhouseState, payload.note, sensorHistory, previousNote)
+      const systemNote = historicalImages.length
+        ? [
+            payload.note,
+            `Sistema: foram anexadas ${historicalImages.length} fotos historicas locais apos as fotos atuais. Use-as apenas como comparacao temporal; as primeiras ${base64Images.length} imagens sao da captura atual.`
+          ].filter(Boolean).join('\n\n')
+        : payload.note
+      const analysis = await geminiAnalyzer.analyze(
+        [...base64Images, ...historicalImages],
+        greenhouseState,
+        systemNote,
+        sensorHistory,
+        previousNote,
+        config.aiModelId
+      )
 
       const suggestion: AISuggestion = {
         createdAt: payload.timestamp,
@@ -102,7 +132,8 @@ class CaptureOrchestrator {
         thumbnails: this.extractThumbnails(payload),
         captureMeta: {
           note: payload.note,
-          localPaths
+          localPaths,
+          historicalLocalPaths
         }
       }
 

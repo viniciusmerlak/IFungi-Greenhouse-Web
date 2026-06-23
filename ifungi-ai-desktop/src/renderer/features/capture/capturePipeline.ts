@@ -164,7 +164,8 @@ export async function captureImagesFromVideoElements(
 export async function submitCapturedImages(
   images: CapturedImage[],
   note?: string,
-  skipGeminiAnalysis = false
+  skipGeminiAnalysis = false,
+  includeHistoricalImages?: boolean
 ): Promise<{ success: boolean; suggestionId?: string; error?: string }> {
   if (images.length === 0) {
     return { success: false, error: 'No images captured from configured cameras' }
@@ -174,13 +175,15 @@ export async function submitCapturedImages(
     images,
     note: note?.trim() || undefined,
     timestamp: Date.now(),
-    skipGeminiAnalysis
+    skipGeminiAnalysis,
+    includeHistoricalImages
   })
 }
 
 export async function runCapturePipeline(
   deviceIds: string[],
-  note?: string
+  note?: string,
+  includeHistoricalImages?: boolean
 ): Promise<{ success: boolean; suggestionId?: string; error?: string }> {
-  return submitCapturedImages(await captureImagesFromDevices(deviceIds), note)
+  return submitCapturedImages(await captureImagesFromDevices(deviceIds), note, false, includeHistoricalImages)
 }
